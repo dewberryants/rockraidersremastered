@@ -42,6 +42,10 @@ public:
             RR_WARN("Texture set %s not loaded", set.c_str());
 
         LoadObjects(cfg);
+        IconPanel& panel = *game.iconPanel;
+        panel.BackToMain();
+        panel.isEnabled = [this](MenuItem item) { return ItemEnabled(item); };
+        panel.onItem = [this](MenuItem item) { OnMenuItem(item); };
         auto rgb = [&](std::string_view key, Vec3f fallback) {
             float r, g, b;
             return cfg.GetRGB(game.Id("Main", key), r, g, b) ? Vec3f{r, g, b} : fallback;
@@ -114,6 +118,8 @@ public:
     // World clicks (the part of Lego_HandleWorld implemented so far): a unit under the cursor is
     // selected; with units selected, clicking open floor sends them there.
     void HandleWorldClick(Input& in) {
+        IconPanel& panel = *GetGame().iconPanel;
+        if (panel.HandleInput(in)) return;  // the panel takes clicks over it
         if (!in.leftReleased() && !in.rightReleased()) return;
         if (in.rightReleased()) {
             // TODO(interface): right-click handling of the original (menus, cancel).
@@ -126,15 +132,57 @@ public:
             if (Selection::IsSelectable(*o)) {
                 messages_.Post(MessageType::ClearSelection);
                 messages_.Post(MessageType::Select, o);
+                panel.OpenMenu(UnitMenu(*o));
             }
             return;
         }
         Vec3f hit;
         BlockPos b;
         if (!PickGround(origin, dir, hit) || !level_.map().WorldToBlock(hit.x, hit.y, b.x, b.y)) return;
-        // TODO(interface): wall and building menus (dig, reinforce, dynamite, ...).
-        if (!selection_.empty() && (level_.block(b.x, b.y).flags & world::BlockFlag::Ground))
+        const world::Block& blk = level_.block(b.x, b.y);
+        if (!selection_.empty() && (blk.flags & world::BlockFlag::Ground)) {
             messages_.Post(MessageType::UserGoto, nullptr, 0, &b);
+            panel.BackToMain();
+            return;
+        }
+        // Block menus (TODO(interface): the remaining cases of Lego_HandleWorld).
+        if ((blk.flags & world::BlockFlag::Wall) && !(blk.flags & world::BlockFlag::Ground)) {
+            panel.OpenMenu(MenuType::Wall, &b);
+            RR_DEBUG("Wall menu at %d,%d terrain %d flags %08x", b.x, b.y, int(blk.terrain), blk.flags);
+        } else if (blk.flags & world::BlockFlag::Ground) {
+            const bool rubble = !(blk.flags & world::BlockFlag::CleanFloor);
+            panel.OpenMenu(rubble ? MenuType::Rubble : MenuType::Ground, &b);
+        }
+    }
+
+    // Interface item availability (simplified until the matching game systems exist).
+    bool ItemEnabled(MenuItem item) const {
+        const BlockPos& b = GetGame().iconPanel->block();
+        const world::Block& blk = level_.block(b.x, b.y);
+        switch (item) {
+        case MenuItem::Dig:
+            // Hard rock needs a unit that can drill it; immovable rock never.
+            return blk.terrain != world::Terrain::Immovable && !(blk.flags & world::BlockFlag::Ground);
+        case MenuItem::ClearRubble: return (blk.flags & world::BlockFlag::Ground) && !(blk.flags & world::BlockFlag::CleanFloor);
+        default: return false;  // TODO(interface): the remaining items as their systems arrive
+        }
+    }
+
+    void OnMenuItem(MenuItem item) {
+        IconPanel& panel = *GetGame().iconPanel;
+        RR_INFO("Menu item %s at block %d,%d", MenuItemName(item), panel.block().x, panel.block().y);
+        // TODO(ai): Dig/ClearRubble create AI task requests (AITask_DoDig_AtBlockPos, ...).
+        panel.BackToMain();
+    }
+
+    static MenuType UnitMenu(const GameObject& o) {
+        switch (o.type) {
+        case ObjType::MiniFigure: return MenuType::LegoMan;
+        case ObjType::Vehicle: return MenuType::Vehicle;  // TODO(vehicles): water / unmanned variants
+        case ObjType::Building: return MenuType::Building;
+        case ObjType::ElectricFence: return MenuType::ElectricFence;
+        default: return MenuType::Main;
+        }
     }
 
     void HandleMessage(const Message& m) {
@@ -143,7 +191,10 @@ public:
             if (m.object && selection_.Select(*m.object) && m.object->type != ObjType::Building)
                 objects_.RouteEnd(*m.object, false);  // TODO(ai): also drops gather tasks
             break;
-        case MessageType::ClearSelection: selection_.Clear(); break;
+        case MessageType::ClearSelection:
+            selection_.Clear();
+            GetGame().iconPanel->BackToMain();
+            break;
         case MessageType::Deselect:
             if (m.object) selection_.Deselect(*m.object);
             break;
@@ -288,6 +339,12 @@ public:
         for (size_t i = 0; i < selection_.units().size(); ++i)
             DrawSelectionBox(r2d, viewProj, *selection_.units()[i], i == 0 ? ColorF{0, 1, 0, 1} : ColorF{1, 1, 0, 1});
         if (const Font* f = GetGame().textFont.get()) f->Draw(r2d, 8, 8, ls.fullName);
+        r2d.SetAnchor(Anchor::Right);
+        GetGame().iconPanel->Draw(r2d);
+        r2d.SetAnchor(Anchor::Center);
+        // TODO(interface): proper tooltip boxes (ToolTip_*); plain text for now.
+        if (const Font* f = GetGame().toolTipFont.get(); f && !GetGame().iconPanel->hoverToolTip().empty())
+            f->Draw(r2d, GetApp().input().mouseX() + 16, GetApp().input().mouseY() + 16, GetGame().iconPanel->hoverToolTip());
         GetPointers().Draw(r2d, GetApp().input().mouseX(), GetApp().input().mouseY());
     }
 

@@ -35,6 +35,8 @@ bool Game::Initialise(const Config& cfg) {
     const uint64_t t0 = SDL_GetTicks64();
     GetStats().Load(cfg, gameName);
     GetObjectRegistry().Load(cfg, gameName);
+    iconPanel = std::make_unique<IconPanel>();
+    iconPanel->Load(cfg, gameName);
     RR_INFO("Object models loaded in %llu ms", (unsigned long long)(SDL_GetTicks64() - t0));
 
     if (cfg.GetBool(Id("Main", "FrontEnd")) == BoolTri::True) {

@@ -5,6 +5,7 @@
 
 #include "config/Config.h"
 #include "gfx/Font.h"
+#include "game/ui/Interface.h"
 
 namespace rr {
 
@@ -26,6 +27,7 @@ struct Game {
     std::unique_ptr<Font> briefFont2;    // Interface\Fonts\MBriefFONT2.bmp
 
     std::unique_ptr<front::FrontEnd> frontEnd;
+    std::unique_ptr<IconPanel> iconPanel;  // in-game icon menus (Interface_Initialise(565, 18))
 
     bool introsDone = false;
     std::string selectedLevel;  // "Levels::Tutorial01" when a level was chosen
