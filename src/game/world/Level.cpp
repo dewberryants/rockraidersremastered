@@ -176,23 +176,24 @@ void Level::UpdateSurface(int x, int y) {
     if (dugCount == 4) {
         b.flags = (before & ~kShapeAndReinforce) | BlockFlag::Visible | BlockFlag::Ground;
         b.direction = 0;
-        if (inMap) map.quad(x, y).wobble = false;
         if (b.terrain == Terrain::Lava || (b.flags & BlockFlag::Eroding)) {
             if (!(b.flags & BlockFlag::LavaSettled)) {
                 if (b.erodeStage == 4) {
                     b.texture = 0x46;
-                    if (inMap) map.quad(x, y).wobble = true;
+                    map.SetWobble(x, y, true);
                     // TODO(effects): smoke on every third lava block.
                 } else {
+                    map.SetWobble(x, y, false);
                     static const uint8_t kStages[4] = {0x06, 0x16, 0x26, 0x36};
                     b.texture = kStages[b.erodeStage & 3];
                 }
             } else {
+                map.SetWobble(x, y, false);
                 b.texture = 0x47;
             }
         } else if (b.terrain == Terrain::Lake) {
             b.texture = 0x45;
-            if (inMap) map.quad(x, y).wobble = true;
+            map.SetWobble(x, y, true);
         } else if (!(b.flags & BlockFlag::Foundation)) {
             if (b.flags & BlockFlag::Path) {
                 b.texture = ChoosePathTexture(x, y, b.direction, (b.flags2 & BlockFlag2::Powered) != 0);

@@ -54,6 +54,10 @@ public:
     void SetRotated(int bx, int by, bool on);
     void SetTexture(int bx, int by, uint8_t texture, uint8_t direction);
     void UpdateAllNormals();
+    // Drifting texture coordinates for water and lava (Map3D_SetBlockUVWobbles / UpdateTextureUVs).
+    // The list order is kept like the original's because re-targeting draws from the game RNG.
+    void SetWobble(int bx, int by, bool on);
+    void UpdateUVs(float elapsed);
 
     // Ground height (Z) at a world position, interpolated over the triangle under it.
     float WorldZ(float x, float y) const;
@@ -69,6 +73,7 @@ private:
     float minZ_ = 0.0f;
     std::vector<Point> points_;
     std::vector<Quad> quads_;
+    std::vector<std::pair<int, int>> wobbleList_;
 };
 
 }  // namespace rr::world

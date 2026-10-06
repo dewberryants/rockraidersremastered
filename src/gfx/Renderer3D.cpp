@@ -47,7 +47,12 @@ std::unique_ptr<Texture3D> Texture3D::FromBitmap(const Bitmap& bmp, bool colourK
     auto t = std::make_unique<Texture3D>();
     t->w_ = bmp.width;
     t->h_ = bmp.height;
-    std::vector<uint8_t> px = bmp.rgba;
+    // The original copied BMP rows into texture surfaces in file order (bottom row first), so
+    // texture v = 0 is the bottom of the image. Bitmap rows are top-down: reverse them here.
+    std::vector<uint8_t> px(bmp.rgba.size());
+    const size_t rowBytes = size_t(bmp.width) * 4;
+    for (int y = 0; y < bmp.height; ++y)
+        std::copy_n(&bmp.rgba[size_t(bmp.height - 1 - y) * rowBytes], rowBytes, &px[size_t(y) * rowBytes]);
     for (size_t i = 0; i < px.size(); i += 4) {
         if (colourKeyBlack && px[i] == 0 && px[i + 1] == 0 && px[i + 2] == 0) px[i + 3] = 0;
         if (px[i + 3] < 255) t->alpha_ = true;

@@ -115,50 +115,6 @@ public:
             objects_.push_back(std::move(po));
         }
         RR_INFO("Placed %zu objects", objects_.size());
-        for (const PlacedObject& o : objects_) {
-            LwsPose pose;
-            EvaluateLws(*o.activity->scene, 0, true, pose);
-            Vec3f lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
-            size_t verts = 0;
-            const Mat4 om = ObjectMatrix(o.position, o.heading, o.model->scale);
-            for (size_t i = 0; i < o.activity->scene->nodes.size(); ++i) {
-                const auto& n = o.activity->scene->nodes[i];
-                if (!n.mesh) continue;
-                for (const auto& g : n.mesh->groups)
-                    for (const auto& v : g.vertices) {
-                        const Vec3f w = (om * pose.world[i]).TransformPoint(v.pos);
-                        lo = {std::min(lo.x, w.x), std::min(lo.y, w.y), std::min(lo.z, w.z)};
-                        hi = {std::max(hi.x, w.x), std::max(hi.y, w.y), std::max(hi.z, w.z)};
-                        ++verts;
-                    }
-            }
-            static bool dumped = false;
-            if (!dumped && o.type == "Pilot") {
-                dumped = true;
-                for (size_t i = 0; i < o.activity->scene->nodes.size(); ++i) {
-                    const auto& n = o.activity->scene->nodes[i];
-                    const Mat4& w = pose.world[i];
-                    RR_INFO("    node %zu %s parent=%d keys=%zu t=(%.2f %.2f %.2f) sx=%.2f", i, n.name.c_str(), n.parent,
-                            n.keys.size(), w.m[12], w.m[13], w.m[14], Length({w.m[0], w.m[1], w.m[2]}));
-                }
-            }
-            size_t groups = 0, tris = 0, textured = 0;
-            for (const auto& n : o.activity->scene->nodes) {
-                if (!n.mesh) continue;
-                for (const auto& g : n.mesh->groups) {
-                    ++groups;
-                    tris += g.indices.size() / 3;
-                    if (g.material.texture) ++textured;
-                    if (o.type == "Pilot" && groups < 6)
-                        RR_INFO("    group diffuse=(%.2f %.2f %.2f) alpha=%.2f tex=%p", g.material.diffuse.x,
-                                g.material.diffuse.y, g.material.diffuse.z, g.material.alpha, (const void*)g.material.texture);
-                }
-            }
-            RR_INFO("  groups=%zu tris=%zu textured=%zu", groups, tris, textured);
-            RR_INFO("  %s at (%.1f %.1f %.1f) nodes=%zu verts=%zu bounds (%.1f %.1f %.1f)-(%.1f %.1f %.1f)", o.type.c_str(),
-                    o.position.x, o.position.y, o.position.z, o.activity->scene->nodes.size(), verts, lo.x, lo.y, lo.z,
-                    hi.x, hi.y, hi.z);
-        }
     }
 
     void LoadCamera(const Config& cfg) {
@@ -207,6 +163,7 @@ public:
         if (in.wheel()) camera_.zoom = std::clamp(camera_.zoom - float(in.wheel()) * 10.0f, camera_.minZoom, camera_.maxZoom);
         GetPointers().Update(elapsed);
         for (PlacedObject& o : objects_) o.time += elapsed;
+        level_.map().UpdateUVs(elapsed);
     }
 
     void DrawTerrain() {
@@ -267,6 +224,8 @@ public:
         LwsPose pose;
         for (const PlacedObject& o : objects_) {
             EvaluateLws(*o.activity->scene, o.time, o.activity->looping, pose);
+            static const bool hideObjects = std::getenv("RR_DEBUG_NOOBJ") != nullptr;  // pixel-diff checks
+            if (hideObjects) continue;
             DrawPose(renderer_, *o.activity->scene, pose, ObjectMatrix(o.position, o.heading, o.model->scale));
         }
         renderer_.EndFrame();

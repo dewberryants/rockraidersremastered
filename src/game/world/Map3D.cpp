@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 #include "core/Random.h"
 
@@ -101,6 +102,54 @@ void Map3D::SetTexture(int bx, int by, uint8_t texture, uint8_t direction) {
     for (int c = 0; c < 4; ++c) {
         const uint8_t bits = kUvBits[(c - direction) & 3];
         q.uv[c] = {float(bits >> 1), float(bits & 1)};
+    }
+}
+
+void Map3D::SetWobble(int bx, int by, bool on) {
+    if (!InBlocks(bx, by)) return;
+    Quad& q = quad(bx, by);
+    if (on == q.wobble) return;
+    q.wobble = on;
+    if (on) {
+        wobbleList_.emplace_back(bx, by);
+        return;
+    }
+    for (size_t i = 0; i < wobbleList_.size(); ++i) {
+        if (wobbleList_[i] == std::make_pair(bx, by)) {
+            wobbleList_[i] = wobbleList_.back();  // swap-remove, as the original
+            wobbleList_.pop_back();
+            return;
+        }
+    }
+}
+
+void Map3D::UpdateUVs(float elapsed) {
+    if (elapsed <= 0.001f) return;
+    // Each corner eases towards a target (point wobble + corner base); when it gets close the
+    // point picks a new random drift direction.
+    static const Vec2 kBase[4] = {{0, 1}, {1, 1}, {1, 0}, {0, 0}};
+    const float p = 50.0f / elapsed;
+    const float f = 1.0f / (p + 1.0f);
+    for (const auto& [bx, by] : wobbleList_) {
+        Quad& q = quad(bx, by);
+        for (int c = 0; c < 4; ++c) {
+            Point& pt = points_[size_t(by + kCornerY[c]) * pointsW_ + bx + kCornerX[c]];
+            Vec2 target{pt.wobble.x + kBase[c].x, pt.wobble.y + kBase[c].y};
+            Vec2& uv = q.uv[c];
+            const float dist = std::sqrt((uv.x - target.x) * (uv.x - target.x) + (uv.y - target.y) * (uv.y - target.y));
+            Vec2 from = target;
+            if (dist <= 0.36f) {
+                from = uv;
+                if (dist < 0.05f) {
+                    const float rx = random::RandRange(0.0f, 1.0f);
+                    const float ry = random::RandRange(0.0f, 1.0f);
+                    const float inv = 1.0f / std::sqrt(rx * rx + ry * ry);
+                    pt.wobble = {(pt.wobble.x + rx * inv) * 0.3f, (pt.wobble.y + ry * inv) * 0.3f};
+                    target = {pt.wobble.x + kBase[c].x, pt.wobble.y + kBase[c].y};
+                }
+            }
+            uv = {f * (p * from.x + target.x), f * (p * from.y + target.y)};
+        }
     }
 }
 
