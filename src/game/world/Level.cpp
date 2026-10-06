@@ -105,9 +105,8 @@ bool Level::LoadTerrain(const std::string& path) {
 void Level::LoadCryOre(const std::string& path) {
     auto m = MapFile::Load(path);
     if (!m || m->width != width_ || m->height != height_) return;
-    // TODO(drilling): yields per block; the raw value is kept until mining is implemented.
     for (int y = 0; y < height_; ++y)
-        for (int x = 0; x < width_; ++x) block(x, y).crystals = uint8_t(m->At(x, y));
+        for (int x = 0; x < width_; ++x) block(x, y).cryOre = uint8_t(m->At(x, y));
 }
 
 void Level::LoadPaths(const std::string& path) {
@@ -315,7 +314,37 @@ bool Level::DestroyWall(int x, int y, bool hiddenCavern) {
         b.flags2 = (b.flags2 & ~BlockFlag2::HiddenSlugHole) | BlockFlag2::SlugHole;
         UpdateSurface(x, y);
     }
+    exposed_.emplace_back(x, y);
+    if (!hiddenCavern) {
+        // Breaking into a hidden cavern opens all of it.
+        // TODO(interface): info message, "cavern discovered" text and reward counter.
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                if (!(block(x + dx, y + dy).flags & BlockFlag::HiddenCavern)) continue;
+                UncoverHiddenCavern(x + dx, y + dy);
+                ++cavernsDiscovered_;
+            }
+        }
+    }
     return true;
+}
+
+void Level::UncoverHiddenCavern(int x, int y) {
+    std::vector<std::pair<int, int>> wave{{x, y}}, next;
+    while (!wave.empty()) {
+        next.clear();
+        for (const auto& [cx, cy] : wave) {
+            for (int ny = cy - 1; ny <= cy + 1; ++ny) {
+                for (int nx = cx - 1; nx <= cx + 1; ++nx) {
+                    if (!InBounds(nx, ny) || !(block(nx, ny).flags & BlockFlag::HiddenCavern)) continue;
+                    DestroyWall(nx, ny, true);
+                    block(nx, ny).flags &= ~BlockFlag::HiddenCavern;
+                    if (nx != cx || ny != cy) next.emplace_back(nx, ny);
+                }
+            }
+        }
+        wave.swap(next);
+    }
 }
 
 bool Level::ClearRubbleLayer(int x, int y) {

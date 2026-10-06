@@ -16,7 +16,7 @@ const char* const kPriorityNames[int(PriorityType::Count)] = {
     "Crystal", "Ore", "DefaultCollect", "Destruction", "Construction", "Request", "Reinforce", "Repair",
     "Clearing", "Storage", "Refining", "HealthLow", "GetIn", "Upgrade", "BuildPath", "AttackRockMonster",
     "Barrier", "FindLoad", "Recharge", "UpgradeBuilding", "Gather", "Steal", "Punch", "Depart", "AttackPath",
-    "AttackObject", "Congregate", "Train",
+    "AttackObject", "Congregate",
 };
 
 constexpr float kRetryTime = 75.0f;  // game units before a task whose route failed is offered again
@@ -26,6 +26,16 @@ bool Adjacent(BlockPos a, BlockPos b) {
 }
 
 bool TaskNeedsAdjacentBlock(TaskType t) { return t == TaskType::Dig || t == TaskType::Reinforce; }
+
+// Block route that also covers standing in the target block already (a one-node route).
+bool RouteBlocks(const world::Level& level, const GameObject& unit, BlockPos from, BlockPos to,
+                 std::vector<BlockPos>& out) {
+    if (from == to) {
+        out.assign(1, from);
+        return true;
+    }
+    return BuildRouteList(level, &unit, from, to, out);
+}
 
 bool IsStorageBuilding(const GameObject& o) {
     if (o.type != ObjType::Building || !o.stats || o.removed) return false;
@@ -189,14 +199,14 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         break;
     }
     case TaskType::Clear:
-        if (!BuildRouteList(level, &unit, from, t.block, route) || !objects.RouteBegin(unit, route)) return false;
+        if (!RouteBlocks(level, unit, from, t.block, route) || !objects.RouteBegin(unit, route)) return false;
         unit.route.back().action = RouteAction::Clear;
         break;
     case TaskType::Collect: {
         BlockPos tb;
         if (!t.target || !objects.BlockOf(*t.target, tb)) return false;
         const Vec2 at{t.target->position.x, t.target->position.y};
-        if (!BuildRouteList(level, &unit, from, tb, route) || !objects.RouteBegin(unit, route, &at)) return false;
+        if (!RouteBlocks(level, unit, from, tb, route) || !objects.RouteBegin(unit, route, &at)) return false;
         unit.route.back().action = RouteAction::Collect;
         unit.stateTarget = t.target;
         break;
@@ -237,10 +247,12 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
             BlockPos from, to;
             std::vector<BlockPos> route;
             if (best && objects.BlockOf(u, from) && objects.BlockOf(*best, to) &&
-                BuildRouteList(level, &u, from, to, route) && objects.RouteBegin(u, route)) {
+                RouteBlocks(level, u, from, to, route) && objects.RouteBegin(u, route)) {
                 u.route.back().action = RouteAction::Deposit;
                 u.stateTarget = best;
+                RR_DEBUG("%s takes %s to %s", u.info->name.c_str(), u.carried->info->name.c_str(), best->info->name.c_str());
             }
+            // TODO(ai): verify what units do with a load when there is nowhere to deliver it.
             continue;
         }
         idle.push_back(&u);
@@ -272,6 +284,7 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
         if (bestIdx == idle.size()) continue;
         GameObject& unit = *idle[bestIdx];
         if (!Start(*t, unit, objects, level)) {
+            RR_DEBUG("Task %d could not start for %s", int(t->type), unit.info->name.c_str());
             t->retryTimer = kRetryTime;
             continue;
         }

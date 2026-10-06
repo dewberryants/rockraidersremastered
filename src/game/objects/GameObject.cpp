@@ -221,6 +221,7 @@ void ObjectList::Update(float elapsed) {
 }
 
 void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, GameObject* target) {
+    RR_DEBUG("%s starts action %d at %d,%d", o.info->name.c_str(), int(action), block.x, block.y);
     o.stateBlock = block;
     o.stateTarget = target;
     switch (action) {
@@ -246,6 +247,7 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
 }
 
 void ObjectList::FinishAction(GameObject& o, bool success) {
+    RR_DEBUG("%s finished action (state %d): %s", o.info->name.c_str(), int(o.state), success ? "ok" : "failed");
     o.state = UnitState::Idle;
     o.stateTarget = nullptr;
     o.SetActivity(o.carried ? ActivityType::CarryStand : ActivityType::Stand);
@@ -542,6 +544,39 @@ void ObjectList::Clear() {
     hidden_.clear();
 }
 
+GameObject* ObjectList::PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg) {
+    GameObject* o = Create(info);
+    if (info.type == ObjType::Building) {
+        // TODO(construction): Construction_SpawnBuilding (shape points, foundations, paths).
+        BlockPos b;
+        level_->map().WorldToBlock(x, y, b.x, b.y);
+        const Vec2 c = level_->map().BlockCentre(b.x, b.y);
+        const int dir = int(std::lround(headingDeg / 90.0f)) & 3;
+        SetPositionAndHeading(*o, c.x, c.y, float(dir) * kPi * 0.5f);
+    } else {
+        SetPositionAndHeading(*o, x, y, headingDeg * (1.0f / 180.0f) * kPi);
+    }
+    return o;
+}
+
+std::vector<GameObject*> ObjectList::ExposeBlock(int bx, int by) {
+    std::vector<GameObject*> created;
+    for (size_t i = 0; i < hidden_.size();) {
+        const HiddenObject& h = hidden_[i];
+        BlockPos b;
+        if (level_->map().WorldToBlock(h.position.x, h.position.y, b.x, b.y) && b.x == bx && b.y == by) {
+            GameObject* o = PlaceListedObject(*h.info, h.position.x, h.position.y, h.heading);
+            o->health = h.health;
+            o->customName = h.name;
+            created.push_back(o);
+            hidden_.erase(hidden_.begin() + std::ptrdiff_t(i));
+        } else {
+            ++i;
+        }
+    }
+    return created;
+}
+
 bool ObjectList::LoadObjectList(const std::string& file, world::Level& level, CameraStart& camera) {
     level_ = &level;
     Config ol;
@@ -585,19 +620,10 @@ bool ObjectList::LoadObjectList(const std::string& file, world::Level& level, Ca
         const bool exposed = ux < level.width() - 1 && uy < level.height() - 1 &&
                              (level.block(ux, uy).flags & world::BlockFlag::Ground);
         if (!exposed) {
-            hidden_.push_back({info, {x, y}, heading, health, key, driving});
+            hidden_.push_back({info, {x, y}, headingDeg, health, key, driving});
             continue;
         }
-        GameObject* o = nullptr;
-        if (info->type == ObjType::Building) {
-            // TODO(construction): Construction_SpawnBuilding (shape points, foundations, paths).
-            o = Create(*info);
-            const int dir = int(std::lround(headingDeg / 90.0f)) & 3;
-            SetPositionAndHeading(*o, centre.x, centre.y, float(dir) * kPi * 0.5f);
-        } else {
-            o = Create(*info);
-            SetPositionAndHeading(*o, x, y, heading);
-        }
+        GameObject* o = PlaceListedObject(*info, x, y, headingDeg);
         o->health = health;
         o->customName = key;
         // TODO(ai): crystals/ore/dynamite/barriers get a collect task; drivers board "driving".

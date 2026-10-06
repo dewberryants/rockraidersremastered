@@ -104,7 +104,7 @@ struct ObjectSpeeds {
 struct HiddenObject {
     const ObjectTypeInfo* info = nullptr;
     Vec2 position;
-    float heading = 0.0f;
+    float heading = 0.0f;  // degrees, as in the object list
     float health = 100.0f;
     std::string name, driving;
 };
@@ -113,6 +113,12 @@ struct HiddenObject {
 class ObjectList {
 public:
     GameObject* Create(const ObjectTypeInfo& info);
+    // Creates an object standing at a world position (LegoObject_CreateInWorld).
+    GameObject* Spawn(const ObjectTypeInfo& info, float x, float y, float heading = 0.0f) {
+        GameObject* o = Create(info);
+        SetPositionAndHeading(*o, x, y, heading);
+        return o;
+    }
     void SetPositionAndHeading(GameObject& o, float x, float y, float heading);
     ObjectSpeeds CalculateSpeeds(const GameObject& o, float elapsed) const;
 
@@ -149,8 +155,11 @@ public:
 
     const std::vector<std::unique_ptr<GameObject>>& objects() const { return objects_; }
     const std::vector<HiddenObject>& hiddenObjects() const { return hidden_; }
+    // Creates the hidden objects standing on a block that has just opened up.
+    std::vector<GameObject*> ExposeBlock(int bx, int by);
 
 private:
+    GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);
     void UpdateAction(GameObject& o, float elapsed);
     void BuildRouteCurve(GameObject& o, bool skipCornerNode);

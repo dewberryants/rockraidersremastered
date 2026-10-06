@@ -88,6 +88,10 @@ bool App::Init(const LaunchOptions& launch) {
         RR_ERROR("SDL_Init failed: %s", SDL_GetError());
         return false;
     }
+    // Automated runs (screenshot mode) open without taking focus and ignore real input, so a
+    // test window never reacts to what the user is doing elsewhere.
+    automated_ = !launch_.screenshotPath.empty();
+    if (automated_) SDL_SetHint(SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN, "1");
     WindowConfig wc;
     wc.width = options_.windowWidth;
     wc.height = options_.windowHeight;
@@ -101,6 +105,22 @@ bool App::Init(const LaunchOptions& launch) {
 }
 
 void App::SetScene(std::unique_ptr<Scene> scene) { pendingScene_ = std::move(scene); }
+
+namespace {
+bool IsUserInputEvent(const SDL_Event& ev) {
+    switch (ev.type) {
+    case SDL_KEYDOWN:
+    case SDL_KEYUP:
+    case SDL_TEXTINPUT:
+    case SDL_TEXTEDITING:
+    case SDL_MOUSEBUTTONDOWN:
+    case SDL_MOUSEBUTTONUP:
+    case SDL_MOUSEWHEEL:
+    case SDL_MOUSEMOTION: return true;
+    default: return false;
+    }
+}
+}  // namespace
 
 void App::ApplyScriptedInput() {
     if (launch_.inputScript.empty()) return;
@@ -174,6 +194,7 @@ int App::Run() {
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             if (ev.type == SDL_QUIT) quit_ = true;
+            if (automated_ && IsUserInputEvent(ev)) continue;
             input_.HandleEvent(ev);
         }
         // Mouse in logical coordinates (window points -> drawable pixels -> logical).
@@ -183,7 +204,7 @@ int App::Run() {
         float lx = 0, ly = 0;
         r2d_.WindowToLogical(mx * window_.DrawableWidth() / std::max(1, ww), my * window_.DrawableHeight() / std::max(1, wh),
                              lx, ly);
-        input_.SetMousePos(lx, ly);
+        if (!automated_) input_.SetMousePos(lx, ly);  // automated runs only see scripted moves
 
         const Uint64 now = SDL_GetPerformanceCounter();
         const double dt = double(now - last) / double(freq);

@@ -58,7 +58,8 @@ struct Block {
     uint32_t flags2 = 0;
     int16_t random = 0;      // per-block random value drawn at load
     int16_t seamDigs = 0;
-    uint8_t crystals = 0, ore = 0;
+    uint8_t cryOre = 0;       // CryOre map value: what drilling the wall releases
+    int crystals = 0, ore = 0;  // crystals/ore generated on this block so far
     float damage = 0.0f;     // drilling progress, 1.0 = wall breaks (Level_Block_Damage)
 };
 
@@ -95,8 +96,21 @@ public:
     bool DestroyWall(int x, int y, bool hiddenCavern);
     // Removes one rubble layer; returns true once the floor is clean (Level_Block_ClearRubbleLayer).
     bool ClearRubbleLayer(int x, int y);
+    // Opens a hidden cavern from block (x, y): a wave over the 8 neighbours reaches every
+    // connected hidden block (Level_UncoverHiddenCavern).
+    void UncoverHiddenCavern(int x, int y);
+
+    // Blocks opened up since the last call (for hidden objects) and caverns found.
+    std::vector<std::pair<int, int>> TakeExposedBlocks() { return std::move(exposed_); }
+    int TakeCavernsDiscovered() {
+        const int n = cavernsDiscovered_;
+        cavernsDiscovered_ = 0;
+        return n;
+    }
 
 private:
+    std::vector<std::pair<int, int>> exposed_;
+    int cavernsDiscovered_ = 0;
     bool LoadPreDug(const std::string& path);
     bool LoadTerrain(const std::string& path);
     void LoadCryOre(const std::string& path);

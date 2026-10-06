@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "game/objects/Routing.h"
@@ -27,6 +29,9 @@ enum class MessageType : int {
     Count
 };
 
+// "Dig" / "Message_Dig" -> MessageType::Dig (case-insensitive); Count if unknown.
+MessageType MessageTypeFromName(std::string_view name);
+
 struct Message {
     MessageType type = MessageType::Null;
     GameObject* object = nullptr;
@@ -41,6 +46,9 @@ public:
     static constexpr size_t kMaxPerBuffer = 0x800;
 
     void Post(MessageType type, GameObject* object = nullptr, uint32_t arg = 0, const BlockPos* block = nullptr);
+    // Loads a level's PTL file: event pairs "From To" that rename events before they are handled
+    // (PTL_TranslateEvent, one translation per event).
+    bool LoadTranslation(const std::string& file);
     // Takes the pending batch; new posts during handling land in the next batch.
     void Update(const std::function<void(const Message&)>& handler);
     // Drops pending events referring to an object that is being removed.
@@ -50,6 +58,7 @@ public:
 private:
     std::vector<Message> buffers_[2];
     int current_ = 0;
+    std::vector<std::pair<MessageType, MessageType>> translation_;
 };
 
 // The selected units (up to 100); the first one is the primary unit whose menu is shown.

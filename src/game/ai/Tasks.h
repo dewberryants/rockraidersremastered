@@ -28,7 +28,8 @@ enum class TaskType : int {
 enum class PriorityType : int {
     Crystal, Ore, DefaultCollect, Destruction, Construction, Request, Reinforce, Repair, Clearing, Storage,
     Refining, HealthLow, GetIn, Upgrade, BuildPath, AttackRockMonster, Barrier, FindLoad, Recharge,
-    UpgradeBuilding, Gather, Steal, Punch, Depart, AttackPath, AttackObject, Congregate, Train,
+    UpgradeBuilding, Gather, Steal, Punch, Depart, AttackPath, AttackObject, Congregate,
+    // AI_Priority_Train / AI_Priority_GetTool in level lists are not recognised by the game.
     Count
 };
 const char* PriorityTypeName(PriorityType p);  // "AI_Priority_Crystal"

@@ -9,7 +9,9 @@
 #include "fs/Path.h"
 #include "game/Game.h"
 #include "game/Messages.h"
+#include "core/Random.h"
 #include "game/ai/Tasks.h"
+#include "game/objects/ObjectRegistry.h"
 #include "game/Pointer.h"
 #include "game/front/FrontEnd.h"
 #include "game/objects/GameObject.h"
@@ -43,6 +45,9 @@ public:
             RR_WARN("Texture set %s not loaded", set.c_str());
 
         LoadObjects(cfg);
+        level_.TakeExposedBlocks();  // blocks opened while loading the level are not news
+        level_.TakeCavernsDiscovered();
+        messages_.LoadTranslation(cfg.GetString(Config::Id(game.gameName, levelId_, "PTLFile"), ""));
         tasks_.Reset();
         tasks_.LoadPriorities(cfg, Config::Id(game.gameName, levelId_));
         objects_.onActionDone = [this](GameObject& u, bool ok) { OnActionDone(u, ok); };
@@ -57,6 +62,14 @@ public:
             if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore || o->type == ObjType::Dynamite ||
                 o->type == ObjType::Barrier)
                 tasks_.CreateCollect(*o);
+        // Debug: RR_DEBUG_DIG="x,y;x,y;..." queues dig requests at the start (for scripted tests).
+        if (const char* dig = std::getenv("RR_DEBUG_DIG")) {
+            for (std::string_view entry : SplitTokens(dig, ";")) {
+                const auto xy = SplitTokens(entry, ",");
+                if (xy.size() != 2) continue;
+                debugDigs_.push_back({std::atoi(std::string(xy[0]).c_str()), std::atoi(std::string(xy[1]).c_str())});
+            }
+        }
         IconPanel& panel = *game.iconPanel;
         panel.BackToMain();
         panel.isEnabled = [this](MenuItem item) { return ItemEnabled(item); };
@@ -170,6 +183,39 @@ public:
         }
     }
 
+    // Level_GenerateCrystal / Level_GenerateOre: a resource at a random spot inside the block,
+    // inset a quarter block from its edges.
+    void GenerateResource(BlockPos b, ObjType type, bool count) {
+        const ObjectTypeInfo* info = GetObjectRegistry().Get(type, 0);
+        if (!info) return;
+        const world::Map3D& map = level_.map();
+        const float inset = map.blockSize() * 0.5f - map.blockSize() * 0.25f;
+        const Vec3f p0 = map.PointWorld(b.x, b.y), p2 = map.PointWorld(b.x + 1, b.y + 1);
+        const float x = random::RandRange(p0.x + inset, p2.x - inset);
+        const float y = random::RandRange(p0.y - inset, p2.y + inset);
+        GameObject* o = objects_.Spawn(*info, x, y);
+        // TODO(interface): info message and "crystal found" text.
+        messages_.Post(type == ObjType::PowerCrystal ? MessageType::GenerateCrystalComplete : MessageType::GenerateOreComplete, o);
+        if (count) {
+            world::Block& blk = level_.block(b.x, b.y);
+            if (type == ObjType::PowerCrystal) ++blk.crystals;
+            else ++blk.ore;
+        }
+    }
+
+    // LegoObject_PTL_GenerateFromCryOre: the CryOre value v picks the kind ((v-1) & 3: crystals,
+    // ore, then their second variants) and the amount ((v-1) / 4 into 1, 3, 5, 10, 25).
+    void GenerateFromCryOre(BlockPos b) {
+        const int v = level_.block(b.x, b.y).cryOre;
+        RR_DEBUG("CryOre at %d,%d: %d", b.x, b.y, v);
+        if (v == 0) return;
+        static const int kAmounts[] = {1, 3, 5, 10, 25};
+        const int amount = kAmounts[std::min((v - 1) / 4, 4)];
+        // TODO(objects): the second crystal/ore variants (kinds 2 and 3) as distinct objects.
+        const ObjType type = ((v - 1) & 1) ? ObjType::Ore : ObjType::PowerCrystal;
+        for (int i = 0; i < amount; ++i) GenerateResource(b, type, true);
+    }
+
     // Interface item availability (simplified until the matching game systems exist).
     bool ItemEnabled(MenuItem item) const {
         const BlockPos& b = GetGame().iconPanel->block();
@@ -207,14 +253,18 @@ public:
     }
 
     void OnActionDone(GameObject& unit, bool success) {
-        if (unit.stateBlock.x >= 0 && success) {
-            world::Block& b = level_.block(unit.stateBlock.x, unit.stateBlock.y);
-            // A drilled-out wall leaves rubble to clear.
-            // TODO(ai): verify when the game queues clearing (Level_DestroyWall callbacks).
-            if ((b.flags & world::BlockFlag::Ground) && !(b.flags & world::BlockFlag::CleanFloor) &&
-                (b.flags & world::BlockFlag::DigRequested)) {
+        const Task* t = tasks_.TaskOf(unit);
+        if (success && t) {
+            world::Block& b = level_.block(t->block.x, t->block.y);
+            if (t->type == TaskType::Dig && (b.flags & world::BlockFlag::Ground)) {
+                // Level_DestroyWall: the floor is left full of rubble with clearing queued, and
+                // DigComplete starts the level's event chain (rock fall, crystals, ore).
                 b.flags &= ~world::BlockFlag::DigRequested;
-                tasks_.CreateClear(unit.stateBlock);
+                messages_.Post(MessageType::DigComplete, nullptr, 0, &t->block);
+                // TODO(ai): the game queues one clear request per rubble layer (four).
+                tasks_.CreateClear(t->block);
+            } else if (t->type == TaskType::Clear && (b.flags & world::BlockFlag::CleanFloor)) {
+                messages_.Post(MessageType::ClearComplete, nullptr, 0, &t->block);
             }
         }
         tasks_.TaskFinished(unit, success);
@@ -231,6 +281,8 @@ public:
     }
 
     void HandleMessage(const Message& m) {
+        if (m.type != MessageType::Select && m.type != MessageType::ClearSelection)
+            RR_DEBUG("Event %d object %p block %d,%d", int(m.type), static_cast<void*>(m.object), m.block.x, m.block.y);
         switch (m.type) {
         case MessageType::Select:
             if (m.object && selection_.Select(*m.object) && m.object->type != ObjType::Building)
@@ -242,6 +294,19 @@ public:
             break;
         case MessageType::Deselect:
             if (m.object) selection_.Deselect(*m.object);
+            break;
+        // Events a level's PTL table chains together: drilling causes a rock fall, the fall
+        // releases the block's crystals and ore, cleared rubble may hold ore.
+        case MessageType::RockFall:
+            // TODO(effects): the rock fall animation (Effect_Spawn_RockFall) runs before completing.
+            messages_.Post(MessageType::RockFallComplete, m.object, m.arg, &m.block);
+            break;
+        case MessageType::GenerateFromCryOre: GenerateFromCryOre(m.block); break;
+        case MessageType::GenerateCrystal: GenerateResource(m.block, ObjType::PowerCrystal, true); break;
+        case MessageType::GenerateOre: GenerateResource(m.block, ObjType::Ore, true); break;
+        case MessageType::CollectCrystal:
+        case MessageType::CollectOre:
+            if (m.object && !m.object->removed && !m.object->carrier) tasks_.CreateCollect(*m.object);
             break;
         case MessageType::UserGoto:
             // TODO(ai): AITask_QueueGotoBlock_Group; for now each unit routes directly.
@@ -312,7 +377,21 @@ public:
         GetPointers().Update(elapsed);
         messages_.Update([this](const Message& m) { HandleMessage(m); });
         HandleWorldClick(in);
+        // Debug dig requests wait until their wall has been exposed.
+        for (size_t i = 0; i < debugDigs_.size();) {
+            const BlockPos b = debugDigs_[i];
+            if (tasks_.CreateDig(level_, b, true)) {
+                level_.block(b.x, b.y).flags |= world::BlockFlag::DigRequested;
+                debugDigs_.erase(debugDigs_.begin() + std::ptrdiff_t(i));
+            } else {
+                ++i;
+            }
+        }
         tasks_.Update(objects_, level_, elapsed);
+        for (const auto& [bx, by] : level_.TakeExposedBlocks())
+            for (GameObject* o : objects_.ExposeBlock(bx, by))
+                if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore) tasks_.CreateCollect(*o);
+        if (int n = level_.TakeCavernsDiscovered()) RR_INFO("%d hidden cavern(s) discovered", n);
         objects_.Update(elapsed);
         level_.map().UpdateUVs(elapsed);
     }
@@ -405,6 +484,7 @@ private:
     MessageQueue messages_;
     Selection selection_;
     TaskSystem tasks_;
+    std::vector<BlockPos> debugDigs_;
     int crystals_ = 0, ore_ = 0;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;

@@ -72,6 +72,7 @@ private:
     bool quit_ = false;
     int ticks_ = 0;
     bool scriptedMouse_ = false;
+    bool automated_ = false;  // screenshot runs: no focus, real input ignored
     float scriptedX_ = 0, scriptedY_ = 0;
 };
 

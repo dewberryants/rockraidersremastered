@@ -2,9 +2,53 @@
 
 #include <algorithm>
 
+#include "config/Config.h"
+#include "core/Log.h"
+#include "fs/Path.h"
 #include "game/objects/GameObject.h"
 
 namespace rr {
+
+namespace {
+const char* const kMessageNames[int(MessageType::Count)] = {
+    "Null", "Select", "Selected", "ClearSelection", "Deselect", "Goto", "RockMonsterGoto",
+    "RockMonsterGotoComplete", "UserGoto", "FirstPerson", "TrackObject", "TopView", "PlaySample", "Dig",
+    "DigComplete", "Repair", "RepairComplete", "Reinforce", "ReinforceComplete", "RockFall", "RockFallComplete",
+    "GenerateCrystal", "GenerateCrystalComplete", "CollectCrystal", "CollectCrystalComplete", "CrystalToRefinery",
+    "CrystalToRefineryComplete", "GenerateOre", "GenerateOreComplete", "CollectOre", "CollectOreComplete", "Clear",
+    "ClearComplete", "ClearFallIn", "ClearFallInComplete", "GenerateRockMonster", "GenerateRockMonsterComplete",
+    "GatherRock", "GatherRockComplete", "PickRandomFloor", "PickRandomFloorComplete", "AttackBuilding",
+    "AttackBuildingComplete", "GetIn", "ManSelectedAndMonsterClicked", "FollowAttack", "CollectTool",
+    "ReduceSelection", "BuildPath", "BuildPathComplete", "Train", "TrainComplete", "GenerateCrystalAndOre",
+    "GenerateCrystalAndOreComplete", "GenerateFromCryOre", "GenerateFromCryOreComplete", "Upgrade",
+    "UpgradeComplete", "ClearBuilding", "ClearBuildingComplete", "ClearInitial", "ClearInitialComplete",
+    "ClearRemovePath", "ClearRemovePathComplete", "Debug_DestroyAll",
+};
+}  // namespace
+
+MessageType MessageTypeFromName(std::string_view name) {
+    if (StartsWithNoCase(name, "Message_")) name.remove_prefix(8);
+    for (int i = 0; i < int(MessageType::Count); ++i)
+        if (EqualsNoCase(name, kMessageNames[i])) return MessageType(i);
+    return MessageType::Count;
+}
+
+bool MessageQueue::LoadTranslation(const std::string& file) {
+    translation_.clear();
+    if (file.empty()) return false;
+    Config ptl;
+    if (!ptl.Load(file)) return false;
+    for (Config::ItemRef it = ptl.FindArray("Lego*"); it != Config::kNone; it = ptl.Next(it)) {
+        const MessageType from = MessageTypeFromName(ptl.item(it).key);
+        const MessageType to = MessageTypeFromName(ptl.item(it).value);
+        if (from == MessageType::Count || to == MessageType::Count) {
+            RR_WARN("%s: unknown event pair %s %s", file.c_str(), ptl.item(it).key.c_str(), ptl.item(it).value.c_str());
+            continue;
+        }
+        translation_.emplace_back(from, to);
+    }
+    return true;
+}
 
 void MessageQueue::Post(MessageType type, GameObject* object, uint32_t arg, const BlockPos* block) {
     std::vector<Message>& buf = buffers_[current_];
@@ -21,7 +65,14 @@ void MessageQueue::Update(const std::function<void(const Message&)>& handler) {
     const int batch = current_;
     current_ ^= 1;
     buffers_[current_].clear();
-    for (const Message& m : buffers_[batch]) handler(m);
+    for (Message m : buffers_[batch]) {
+        for (const auto& [from, to] : translation_) {
+            if (m.type != from) continue;
+            m.type = to;
+            break;
+        }
+        handler(m);
+    }
     buffers_[batch].clear();
 }
 
