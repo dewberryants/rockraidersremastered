@@ -1,0 +1,17 @@
+# Portable toolchain (large, re-downloadable; see tools/README.md)
+/tools/*
+!/tools/README.md
+!/tools/env.ps1
+!/tools/env.sh
+!/tools/start-ghidra-mcp-headless.ps1
+
+# Original game: copyrighted assets and binaries, never committed
+/Rock Raiders/
+
+# Ghidra project database and raw decompiler output (derived from the original binary; keep local)
+/analysis/ghidra/
+/analysis/raw/
+
+# Build output
+/build/
+/out/
