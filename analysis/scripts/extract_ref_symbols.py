@@ -19,9 +19,14 @@ EXTERN = re.compile(r"extern\s+.*?[\s*&]([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\]
 SKIP = {"if", "while", "for", "switch", "return", "sizeof", "assert_sizeof", "__declspec", "static_assert"}
 
 
+BARE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)$")
+
+
 def main():
     syms = {}
-    for path in sorted(REF.rglob("*")):
+    # headers first: their annotations sit directly above a declaration
+    files = sorted(REF.rglob("*"), key=lambda p: (p.suffix not in (".h", ".hpp"), str(p)))
+    for path in files:
         if path.suffix not in (".h", ".hpp", ".cpp", ".c"):
             continue
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -32,11 +37,15 @@ def main():
             addr = m.group(1).lower()
             # the declaration is usually on one of the next few non-comment lines
             for nxt in lines[i + 1:i + 6]:
+                if ANNOT.search(nxt):
+                    break  # never borrow the next annotation's declaration
                 s = nxt.strip().lstrip("/").strip()
-                if not s or s.startswith("<LegoRR.exe"):
+                if not s:
                     continue
                 kind, name = None, None
-                if (n := re.search(r"noinline\(([A-Za-z_][A-Za-z0-9_]*)\)", s)):
+                if (b := BARE.match(s)):  # "// Lego_Initialise" placeholder comment
+                    kind, name = "func", b.group(1)
+                elif (n := re.search(r"noinline\(([A-Za-z_][A-Za-z0-9_]*)\)", s)):
                     kind, name = "func", n.group(1)
                 elif (d := DEFINE.match(s)):
                     kind, name = "func", d.group(1)
