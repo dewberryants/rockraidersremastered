@@ -10,26 +10,15 @@
 #include "game/Game.h"
 #include "game/Pointer.h"
 #include "game/front/FrontEnd.h"
+#include "game/objects/GameObject.h"
 #include "game/world/Camera.h"
 #include "game/world/Level.h"
 #include "game/world/TextureSet.h"
 #include "gfx/Renderer3D.h"
-#include "gfx/model/ActivityModel.h"
-#include "gfx/model/ModelDraw.h"
 
 namespace rr {
 
 namespace {
-
-// Placeholder object until LegoObject is implemented: a model playing one activity.
-struct PlacedObject {
-    std::string type;
-    std::shared_ptr<ActivityModel> model;
-    const Activity* activity = nullptr;
-    Vec3f position;
-    float heading = 0;
-    float time = 0;
-};
 
 class LevelScene : public Scene {
 public:
@@ -51,7 +40,6 @@ public:
         if (!textures_.Load(cfg.GetString(Config::Id(game.gameName, set, "texturebasename"), ""), tw, th))
             RR_WARN("Texture set %s not loaded", set.c_str());
 
-        LoadCamera(cfg);
         LoadObjects(cfg);
         auto rgb = [&](std::string_view key, Vec3f fallback) {
             float r, g, b;
@@ -77,64 +65,15 @@ public:
         }
     }
 
-    // Finds the model folder of an object type in the *Types blocks of Lego.cfg.
-    std::string TypeFolder(const Config& cfg, std::string_view type) {
-        for (const char* block : {"MiniFigureTypes", "VehicleTypes", "BuildingTypes", "RockMonsterTypes"}) {
-            if (auto v = cfg.GetString(GetGame().Id(block, type))) {
-                const auto parts = SplitTokens(*v, ",");
-                return std::string(parts.back());
-            }
-        }
-        return {};
-    }
-
     void LoadObjects(const Config& cfg) {
-        const std::string shared = cfg.GetString(GetGame().Id("Main", "SharedObjects"), "");
-        GetMeshTextures().SetSharedDir(cfg.GetString(GetGame().Id("Main", "SharedTextures"), ""));
-        Config ol;
-        if (!ol.Load(cfg.GetString(Config::Id(GetGame().gameName, levelId_, "OListFile"), ""))) return;
-        const world::Map3D& map = level_.map();
-        const Vec2 origin = map.BlockCentre(0, 0);
-        for (Config::ItemRef it = ol.FindArray("Lego*"); it != Config::kNone; it = ol.Next(it)) {
-            const std::string obj = "Lego*::" + ol.item(it).key;
-            PlacedObject po;
-            po.type = ol.GetString(Config::Id(obj, "type"), "");
-            const std::string folder = TypeFolder(cfg, po.type);
-            if (folder.empty()) continue;
-            po.model = LoadActivityModel(folder, shared);
-            if (!po.model) continue;
-            po.activity = po.model->Find("Activity_Stand");
-            if (!po.activity && !po.model->activities.empty()) po.activity = po.model->activities.begin()->second.get();
-            if (!po.activity) continue;
-            const float bx = ol.GetFloat(Config::Id(obj, "xPos")).value_or(0) - 1.0f;
-            const float by = ol.GetFloat(Config::Id(obj, "yPos")).value_or(0) - 1.0f;
-            po.position.x = origin.x - map.blockSize() * 0.5f + bx * map.blockSize();
-            po.position.y = origin.y + map.blockSize() * 0.5f - by * map.blockSize();
-            po.position.z = map.WorldZ(po.position.x, po.position.y);
-            po.heading = ol.GetFloat(Config::Id(obj, "heading")).value_or(0) * (kPi / 180.0f);
-            objects_.push_back(std::move(po));
-        }
-        RR_INFO("Placed %zu objects", objects_.size());
-    }
-
-    void LoadCamera(const Config& cfg) {
-        // The level's object list holds a TVCamera entry with the start view (1-based block coords).
-        Config ol;
+        ObjectList::CameraStart start;
         const std::string olFile = cfg.GetString(Config::Id(GetGame().gameName, levelId_, "OListFile"), "");
-        if (!ol.Load(olFile)) return;
-        for (Config::ItemRef it = ol.FindArray("Lego*"); it != Config::kNone; it = ol.Next(it)) {
-            const std::string obj = "Lego*::" + ol.item(it).key;
-            if (!EqualsNoCase(ol.GetString(Config::Id(obj, "type"), ""), "TVCamera")) continue;
-            const float bx = ol.GetFloat(Config::Id(obj, "xPos")).value_or(0) - 1.0f;
-            const float by = ol.GetFloat(Config::Id(obj, "yPos")).value_or(0) - 1.0f;
-            const float heading = ol.GetFloat(Config::Id(obj, "heading")).value_or(0);
-            const world::Map3D& map = level_.map();
-            const Vec2 origin = map.BlockCentre(0, 0);
-            camera_.x = origin.x - map.blockSize() * 0.5f + bx * map.blockSize();
-            camera_.y = origin.y + map.blockSize() * 0.5f - by * map.blockSize();
-            camera_.rotation = heading * (1.0f / 180.0f) * kPi;
+        if (!objects_.LoadObjectList(olFile, level_, start)) RR_WARN("Object list %s incomplete", olFile.c_str());
+        if (start.found) {
+            camera_.x = start.x;
+            camera_.y = start.y;
+            camera_.rotation = start.heading;
             camera_.tilt = 0.8f;
-            return;
         }
     }
 
@@ -162,7 +101,7 @@ public:
         if (in.KeyDown(SDL_SCANCODE_PAGEDOWN)) camera_.tilt = std::max(camera_.tilt - 0.02f * elapsed, camera_.minTilt);
         if (in.wheel()) camera_.zoom = std::clamp(camera_.zoom - float(in.wheel()) * 10.0f, camera_.minZoom, camera_.maxZoom);
         GetPointers().Update(elapsed);
-        for (PlacedObject& o : objects_) o.time += elapsed;
+        objects_.Update(elapsed);
         level_.map().UpdateUVs(elapsed);
     }
 
@@ -221,13 +160,8 @@ public:
         renderer_.SetFog(fog);
 
         DrawTerrain();
-        LwsPose pose;
-        for (const PlacedObject& o : objects_) {
-            EvaluateLws(*o.activity->scene, o.time, o.activity->looping, pose);
-            static const bool hideObjects = std::getenv("RR_DEBUG_NOOBJ") != nullptr;  // pixel-diff checks
-            if (hideObjects) continue;
-            DrawPose(renderer_, *o.activity->scene, pose, ObjectMatrix(o.position, o.heading, o.model->scale));
-        }
+        static const bool hideObjects = std::getenv("RR_DEBUG_NOOBJ") != nullptr;  // pixel-diff checks
+        if (!hideObjects) objects_.Draw(renderer_);
         renderer_.EndFrame();
 
         r2d.SetAnchor(Anchor::Center);
@@ -242,7 +176,7 @@ private:
     world::TopDownCamera camera_;
     Renderer3D renderer_;
     std::vector<Vertex3D> tris_;
-    std::vector<PlacedObject> objects_;
+    ObjectList objects_;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
     bool failed_ = false;
