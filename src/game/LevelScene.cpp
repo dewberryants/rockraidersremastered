@@ -14,10 +14,22 @@
 #include "game/world/Level.h"
 #include "game/world/TextureSet.h"
 #include "gfx/Renderer3D.h"
+#include "gfx/model/ActivityModel.h"
+#include "gfx/model/ModelDraw.h"
 
 namespace rr {
 
 namespace {
+
+// Placeholder object until LegoObject is implemented: a model playing one activity.
+struct PlacedObject {
+    std::string type;
+    std::shared_ptr<ActivityModel> model;
+    const Activity* activity = nullptr;
+    Vec3f position;
+    float heading = 0;
+    float time = 0;
+};
 
 class LevelScene : public Scene {
 public:
@@ -40,6 +52,7 @@ public:
             RR_WARN("Texture set %s not loaded", set.c_str());
 
         LoadCamera(cfg);
+        LoadObjects(cfg);
         auto rgb = [&](std::string_view key, Vec3f fallback) {
             float r, g, b;
             return cfg.GetRGB(game.Id("Main", key), r, g, b) ? Vec3f{r, g, b} : fallback;
@@ -61,6 +74,90 @@ public:
                 camera_.y = float(std::atof(std::string(parts[3]).c_str()));
             }
             clipDist_ = 100000.0f;
+        }
+    }
+
+    // Finds the model folder of an object type in the *Types blocks of Lego.cfg.
+    std::string TypeFolder(const Config& cfg, std::string_view type) {
+        for (const char* block : {"MiniFigureTypes", "VehicleTypes", "BuildingTypes", "RockMonsterTypes"}) {
+            if (auto v = cfg.GetString(GetGame().Id(block, type))) {
+                const auto parts = SplitTokens(*v, ",");
+                return std::string(parts.back());
+            }
+        }
+        return {};
+    }
+
+    void LoadObjects(const Config& cfg) {
+        const std::string shared = cfg.GetString(GetGame().Id("Main", "SharedObjects"), "");
+        GetMeshTextures().SetSharedDir(cfg.GetString(GetGame().Id("Main", "SharedTextures"), ""));
+        Config ol;
+        if (!ol.Load(cfg.GetString(Config::Id(GetGame().gameName, levelId_, "OListFile"), ""))) return;
+        const world::Map3D& map = level_.map();
+        const Vec2 origin = map.BlockCentre(0, 0);
+        for (Config::ItemRef it = ol.FindArray("Lego*"); it != Config::kNone; it = ol.Next(it)) {
+            const std::string obj = "Lego*::" + ol.item(it).key;
+            PlacedObject po;
+            po.type = ol.GetString(Config::Id(obj, "type"), "");
+            const std::string folder = TypeFolder(cfg, po.type);
+            if (folder.empty()) continue;
+            po.model = LoadActivityModel(folder, shared);
+            if (!po.model) continue;
+            po.activity = po.model->Find("Activity_Stand");
+            if (!po.activity && !po.model->activities.empty()) po.activity = po.model->activities.begin()->second.get();
+            if (!po.activity) continue;
+            const float bx = ol.GetFloat(Config::Id(obj, "xPos")).value_or(0) - 1.0f;
+            const float by = ol.GetFloat(Config::Id(obj, "yPos")).value_or(0) - 1.0f;
+            po.position.x = origin.x - map.blockSize() * 0.5f + bx * map.blockSize();
+            po.position.y = origin.y + map.blockSize() * 0.5f - by * map.blockSize();
+            po.position.z = map.WorldZ(po.position.x, po.position.y);
+            po.heading = ol.GetFloat(Config::Id(obj, "heading")).value_or(0) * (kPi / 180.0f);
+            objects_.push_back(std::move(po));
+        }
+        RR_INFO("Placed %zu objects", objects_.size());
+        for (const PlacedObject& o : objects_) {
+            LwsPose pose;
+            EvaluateLws(*o.activity->scene, 0, true, pose);
+            Vec3f lo{1e9f, 1e9f, 1e9f}, hi{-1e9f, -1e9f, -1e9f};
+            size_t verts = 0;
+            const Mat4 om = ObjectMatrix(o.position, o.heading, o.model->scale);
+            for (size_t i = 0; i < o.activity->scene->nodes.size(); ++i) {
+                const auto& n = o.activity->scene->nodes[i];
+                if (!n.mesh) continue;
+                for (const auto& g : n.mesh->groups)
+                    for (const auto& v : g.vertices) {
+                        const Vec3f w = (om * pose.world[i]).TransformPoint(v.pos);
+                        lo = {std::min(lo.x, w.x), std::min(lo.y, w.y), std::min(lo.z, w.z)};
+                        hi = {std::max(hi.x, w.x), std::max(hi.y, w.y), std::max(hi.z, w.z)};
+                        ++verts;
+                    }
+            }
+            static bool dumped = false;
+            if (!dumped && o.type == "Pilot") {
+                dumped = true;
+                for (size_t i = 0; i < o.activity->scene->nodes.size(); ++i) {
+                    const auto& n = o.activity->scene->nodes[i];
+                    const Mat4& w = pose.world[i];
+                    RR_INFO("    node %zu %s parent=%d keys=%zu t=(%.2f %.2f %.2f) sx=%.2f", i, n.name.c_str(), n.parent,
+                            n.keys.size(), w.m[12], w.m[13], w.m[14], Length({w.m[0], w.m[1], w.m[2]}));
+                }
+            }
+            size_t groups = 0, tris = 0, textured = 0;
+            for (const auto& n : o.activity->scene->nodes) {
+                if (!n.mesh) continue;
+                for (const auto& g : n.mesh->groups) {
+                    ++groups;
+                    tris += g.indices.size() / 3;
+                    if (g.material.texture) ++textured;
+                    if (o.type == "Pilot" && groups < 6)
+                        RR_INFO("    group diffuse=(%.2f %.2f %.2f) alpha=%.2f tex=%p", g.material.diffuse.x,
+                                g.material.diffuse.y, g.material.diffuse.z, g.material.alpha, (const void*)g.material.texture);
+                }
+            }
+            RR_INFO("  groups=%zu tris=%zu textured=%zu", groups, tris, textured);
+            RR_INFO("  %s at (%.1f %.1f %.1f) nodes=%zu verts=%zu bounds (%.1f %.1f %.1f)-(%.1f %.1f %.1f)", o.type.c_str(),
+                    o.position.x, o.position.y, o.position.z, o.activity->scene->nodes.size(), verts, lo.x, lo.y, lo.z,
+                    hi.x, hi.y, hi.z);
         }
     }
 
@@ -109,6 +206,7 @@ public:
         if (in.KeyDown(SDL_SCANCODE_PAGEDOWN)) camera_.tilt = std::max(camera_.tilt - 0.02f * elapsed, camera_.minTilt);
         if (in.wheel()) camera_.zoom = std::clamp(camera_.zoom - float(in.wheel()) * 10.0f, camera_.minZoom, camera_.maxZoom);
         GetPointers().Update(elapsed);
+        for (PlacedObject& o : objects_) o.time += elapsed;
     }
 
     void DrawTerrain() {
@@ -166,6 +264,11 @@ public:
         renderer_.SetFog(fog);
 
         DrawTerrain();
+        LwsPose pose;
+        for (const PlacedObject& o : objects_) {
+            EvaluateLws(*o.activity->scene, o.time, o.activity->looping, pose);
+            DrawPose(renderer_, *o.activity->scene, pose, ObjectMatrix(o.position, o.heading, o.model->scale));
+        }
         renderer_.EndFrame();
 
         r2d.SetAnchor(Anchor::Center);
@@ -180,6 +283,7 @@ private:
     world::TopDownCamera camera_;
     Renderer3D renderer_;
     std::vector<Vertex3D> tris_;
+    std::vector<PlacedObject> objects_;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
     bool failed_ = false;

@@ -48,20 +48,18 @@ std::unique_ptr<Texture3D> Texture3D::FromBitmap(const Bitmap& bmp, bool colourK
     t->w_ = bmp.width;
     t->h_ = bmp.height;
     std::vector<uint8_t> px = bmp.rgba;
-    if (colourKeyBlack) {
-        for (size_t i = 0; i < px.size(); i += 4) {
-            if (px[i] == 0 && px[i + 1] == 0 && px[i + 2] == 0) {
-                px[i + 3] = 0;
-                t->alpha_ = true;
-            }
-        }
+    for (size_t i = 0; i < px.size(); i += 4) {
+        if (colourKeyBlack && px[i] == 0 && px[i + 1] == 0 && px[i + 2] == 0) px[i + 3] = 0;
+        if (px[i + 3] < 255) t->alpha_ = true;
     }
     glGenTextures(1, &t->id_);
     glBindTexture(GL_TEXTURE_2D, t->id_);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bmp.width, bmp.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-    glGenerateMipmap(GL_TEXTURE_2D);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    // Colour-keyed textures (often sparse atlases) are not mipmapped: averaging would fade them out
+    // at a distance, whereas the original keyed each texel.
+    if (!t->alpha_) glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, t->alpha_ ? GL_LINEAR : GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
