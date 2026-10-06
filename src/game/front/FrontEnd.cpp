@@ -12,6 +12,7 @@
 #include "game/Pointer.h"
 #include "game/Sfx.h"
 #include "gfx/Image.h"
+#include "game/LevelScene.h"
 
 namespace rr::front {
 
@@ -372,7 +373,7 @@ public:
                 GetApp().RequestQuit();
             } else if (!fe->SelectedLevel().empty()) {
                 GetGame().selectedLevel = fe->SelectedLevel();
-                GetApp().SetScene(std::make_unique<LevelPlaceholderScene>(GetGame().selectedLevel));
+                GetApp().SetScene(CreateLevelScene(GetGame().selectedLevel));
             } else {
                 fe->BeginScreen(ScreenType::MainMenu);
             }

@@ -32,6 +32,8 @@ struct LaunchOptions {
     // Scripted input for automated checks: "tick:move:x:y;tick:click;tick:key:NAME;..."
     // (positions in logical 640x480 coordinates).
     std::string inputScript;
+    // Debug camera override "tiltDegrees,zoom" for overview screenshots.
+    std::string debugCamera;
 };
 
 class App {

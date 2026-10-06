@@ -2,6 +2,7 @@
 
 #include "fs/Path.h"
 #include "game/Game.h"
+#include "game/LevelScene.h"
 #include "game/front/FrontEnd.h"
 #include "gfx/Font.h"
 #include "gfx/Image.h"
@@ -37,6 +38,12 @@ std::unique_ptr<Scene> CreateStartScene() {
     GetGame().Initialise(app.config());
     if (EqualsNoCase(app.launch().startScene, "fonttest")) return std::make_unique<FontTestScene>();
     if (EqualsNoCase(app.launch().startScene, "menu")) GetGame().introsDone = true;  // skip splash screens
+    if (!app.launch().startLevel.empty()) {
+        std::string id = app.launch().startLevel;
+        if (!StartsWithNoCase(id, "Levels::")) id = "Levels::" + id;
+        GetGame().introsDone = true;
+        return CreateLevelScene(id);
+    }
     return front::CreateFrontEndScene();
 }
 

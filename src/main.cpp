@@ -20,6 +20,7 @@ int main(int argc, char** argv) {
         else if (next("--ticks")) launch.screenshotTicks = std::atoi(argv[++i]);
         else if (next("--scene")) launch.startScene = argv[++i];
         else if (next("--input")) launch.inputScript = argv[++i];
+        else if (next("--debugcam")) launch.debugCamera = argv[++i];
         else if (next("--startlevel") || next("-startlevel")) launch.startLevel = argv[++i];
     }
 
