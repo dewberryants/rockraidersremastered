@@ -8,6 +8,7 @@
 #include "core/Log.h"
 #include "fs/Path.h"
 #include "game/Game.h"
+#include "game/Messages.h"
 #include "game/Pointer.h"
 #include "game/front/FrontEnd.h"
 #include "game/objects/GameObject.h"
@@ -77,19 +78,23 @@ public:
         }
     }
 
-    // Ray from a logical screen position into the 3D view, marched until it passes below the
-    // terrain surface (+Z points down).
-    bool PickGround(float lx, float ly, Vec3f& hit) const {
+    // Ray from a logical screen position into the 3D view.
+    void MouseRay(float lx, float ly, Vec3f& origin, Vec3f& dir) const {
         const world::TopDownCamera::View view = camera_.Compute(&level_.map());
         const float ndcX = lx / uiWidth_ * 2.0f - 1.0f, ndcY = 1.0f - ly / 480.0f * 2.0f;
         const float tanX = 0.5f, tanY = 0.5f / viewAspect_;
         const Vec3f f = Normalize(view.forward);
         const Vec3f s = Normalize(Cross(view.up, f));
         const Vec3f u = Cross(f, s);
-        const Vec3f dir = Normalize(f + s * (ndcX * tanX) + u * (ndcY * tanY));
+        origin = view.eye;
+        dir = Normalize(f + s * (ndcX * tanX) + u * (ndcY * tanY));
+    }
+
+    // Marches a ray until it passes below the terrain surface (+Z points down).
+    bool PickGround(const Vec3f& origin, const Vec3f& dir, Vec3f& hit) const {
         const world::Map3D& map = level_.map();
         auto below = [&](float t) {
-            const Vec3f p = view.eye + dir * t;
+            const Vec3f p = origin + dir * t;
             return p.z >= map.WorldZ(p.x, p.y);
         };
         constexpr float kStep = 2.0f;
@@ -100,10 +105,89 @@ public:
                 const float mid = (lo + hi) * 0.5f;
                 (below(mid) ? hi : lo) = mid;
             }
-            hit = view.eye + dir * hi;
+            hit = origin + dir * hi;
             return true;
         }
         return false;
+    }
+
+    // World clicks (the part of Lego_HandleWorld implemented so far): a unit under the cursor is
+    // selected; with units selected, clicking open floor sends them there.
+    void HandleWorldClick(Input& in) {
+        if (!in.leftReleased() && !in.rightReleased()) return;
+        if (in.rightReleased()) {
+            // TODO(interface): right-click handling of the original (menus, cancel).
+            messages_.Post(MessageType::ClearSelection);
+            return;
+        }
+        Vec3f origin, dir;
+        MouseRay(in.mouseX(), in.mouseY(), origin, dir);
+        if (GameObject* o = objects_.PickObject(origin, dir)) {
+            if (Selection::IsSelectable(*o)) {
+                messages_.Post(MessageType::ClearSelection);
+                messages_.Post(MessageType::Select, o);
+            }
+            return;
+        }
+        Vec3f hit;
+        BlockPos b;
+        if (!PickGround(origin, dir, hit) || !level_.map().WorldToBlock(hit.x, hit.y, b.x, b.y)) return;
+        // TODO(interface): wall and building menus (dig, reinforce, dynamite, ...).
+        if (!selection_.empty() && (level_.block(b.x, b.y).flags & world::BlockFlag::Ground))
+            messages_.Post(MessageType::UserGoto, nullptr, 0, &b);
+    }
+
+    void HandleMessage(const Message& m) {
+        switch (m.type) {
+        case MessageType::Select:
+            if (m.object && selection_.Select(*m.object) && m.object->type != ObjType::Building)
+                objects_.RouteEnd(*m.object, false);  // TODO(ai): also drops gather tasks
+            break;
+        case MessageType::ClearSelection: selection_.Clear(); break;
+        case MessageType::Deselect:
+            if (m.object) selection_.Deselect(*m.object);
+            break;
+        case MessageType::UserGoto:
+            // TODO(ai): AITask_QueueGotoBlock_Group; for now each unit routes directly.
+            for (GameObject* o : selection_.units())
+                if (!objects_.RouteToBlock(*o, m.block)) RR_DEBUG("No route for %s", o->info->name.c_str());
+            break;
+        default: break;
+        }
+    }
+
+    // Corner brackets around a selected unit's projected pick sphere (Lego_DrawObjectSelectionBox).
+    void DrawSelectionBox(Renderer2D& r2d, const Mat4& viewProj, const GameObject& o, ColorF colour) const {
+        auto project = [&](const Vec3f& p, float& x, float& y) {
+            const float* m = viewProj.m;
+            const float cx = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
+            const float cy = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
+            const float cw = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+            if (cw <= 0.0f) return false;
+            x = (cx / cw + 1.0f) * 0.5f * uiWidth_;
+            y = (1.0f - cy / cw) * 0.5f * 480.0f;
+            return true;
+        };
+        const Vec3f centre = objects_.PickCentre(o);
+        float sx, sy;
+        if (!project(centre, sx, sy) || sx < 0.0f || sy < 0.0f || sx > uiWidth_ || sy > 480.0f) return;
+        // Size from how large the pick sphere appears: offset the centre sideways in view space.
+        const world::TopDownCamera::View view = camera_.Compute(&level_.map());
+        const Vec3f side = Normalize(Cross(view.up, Normalize(centre - view.eye)));
+        float ex, ey;
+        if (!project(centre + side * o.stats->Num("PickSphere", o.level), ex, ey)) return;
+        const float dist = std::sqrt((ex - sx) * (ex - sx) + (ey - sy) * (ey - sy));
+        const float h = dist / 2.5f;          // half size of the box
+        const float arm = h / 5.0f + 3.0f;    // bracket length
+        const float l = sx - h, r = sx + h, t = sy - h, btm = sy + h;
+        r2d.DrawLine(l, t + arm, l, t, colour);
+        r2d.DrawLine(l, t, l + arm, t, colour);
+        r2d.DrawLine(r - arm, t, r, t, colour);
+        r2d.DrawLine(r, t, r, t + arm, colour);
+        r2d.DrawLine(r, btm - arm, r, btm, colour);
+        r2d.DrawLine(r, btm, r - arm, btm, colour);
+        r2d.DrawLine(l + arm, btm, l, btm, colour);
+        r2d.DrawLine(l, btm, l, btm - arm, colour);
     }
 
     void Update(float elapsed) override {
@@ -130,21 +214,8 @@ public:
         if (in.KeyDown(SDL_SCANCODE_PAGEDOWN)) camera_.tilt = std::max(camera_.tilt - 0.02f * elapsed, camera_.minTilt);
         if (in.wheel()) camera_.zoom = std::clamp(camera_.zoom - float(in.wheel()) * 10.0f, camera_.minZoom, camera_.maxZoom);
         GetPointers().Update(elapsed);
-        // Debug orders until the interface exists: right-click sends the first minifigure there.
-        if (in.rightReleased()) {
-            Vec3f hit;
-            BlockPos b;
-            if (PickGround(in.mouseX(), in.mouseY(), hit) && level_.map().WorldToBlock(hit.x, hit.y, b.x, b.y)) {
-                for (const auto& o : objects_.objects()) {
-                    if (o->type != ObjType::MiniFigure) continue;
-                    const Vec2 final{hit.x, hit.y};
-                    const bool ok = objects_.RouteToBlock(*o, b, &final);
-                    RR_INFO("Route %s to block %d,%d: %s (%zu nodes)", o->info->name.c_str(), b.x, b.y,
-                            ok ? "ok" : "no route", o->route.size());
-                    break;
-                }
-            }
-        }
+        messages_.Update([this](const Message& m) { HandleMessage(m); });
+        HandleWorldClick(in);
         objects_.Update(elapsed);
         level_.map().UpdateUVs(elapsed);
     }
@@ -175,7 +246,8 @@ public:
         uiWidth_ = r2d.uiWidth();
         const float fovY = 2.0f * std::atan(0.5f / aspect);
         const Mat4 proj = Mat4::Perspective(fovY, aspect, 1.0f, clipDist_);
-        renderer_.BeginFrame(vx, vy, vw, vh, LookDirLH(view.eye, view.forward, view.up), proj, view.eye);
+        const Mat4 viewMat = LookDirLH(view.eye, view.forward, view.up);
+        renderer_.BeginFrame(vx, vy, vw, vh, viewMat, proj, view.eye);
 
         std::vector<Light> lights;
         lights.push_back({Light::Type::Ambient, ambient_});
@@ -211,6 +283,10 @@ public:
         renderer_.EndFrame();
 
         r2d.SetAnchor(Anchor::Center);
+        // Primary unit green, the rest yellow (Lego_DrawAllSelectedUnitBoxes).
+        const Mat4 viewProj = proj * viewMat;
+        for (size_t i = 0; i < selection_.units().size(); ++i)
+            DrawSelectionBox(r2d, viewProj, *selection_.units()[i], i == 0 ? ColorF{0, 1, 0, 1} : ColorF{1, 1, 0, 1});
         if (const Font* f = GetGame().textFont.get()) f->Draw(r2d, 8, 8, ls.fullName);
         GetPointers().Draw(r2d, GetApp().input().mouseX(), GetApp().input().mouseY());
     }
@@ -223,6 +299,8 @@ private:
     Renderer3D renderer_;
     std::vector<Vertex3D> tris_;
     ObjectList objects_;
+    MessageQueue messages_;
+    Selection selection_;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
     float viewAspect_ = 4.0f / 3.0f, uiWidth_ = 640.0f;

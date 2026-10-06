@@ -23,6 +23,7 @@ namespace ObjFlag3 {
 constexpr uint32_t CanTurn = 0x8;              // model has Activity_TurnLeft
 constexpr uint32_t Selectable = 0x100;         // cleared by Unselectable stats
 constexpr uint32_t SimpleObject = 0x20000;     // single container (crystals, ore, dynamite...)
+constexpr uint32_t Selected = 0x200000;
 constexpr uint32_t CanGather = 0x4000000;      // model has Activity_Gather
 constexpr uint32_t CanRouteRubble = 0x10000000;  // model has Activity_RouteRubble
 }  // namespace ObjFlag3
@@ -109,6 +110,10 @@ public:
     // Builds a block route from the object's position and starts it.
     bool RouteToBlock(GameObject& o, BlockPos target, const Vec2* finalPos = nullptr);
     bool BlockOf(const GameObject& o, BlockPos& out) const;
+    // Pick sphere centre: half the collision height above the ground under the object.
+    Vec3f PickCentre(const GameObject& o) const;
+    // Nearest object whose pick sphere the ray passes through (LegoObject_DoPickSphereSelection).
+    GameObject* PickObject(const Vec3f& origin, const Vec3f& dir) const;
     void Update(float elapsed);
     void Draw(Renderer3D& r) const;
     void Clear();

@@ -111,6 +111,35 @@ ObjectSpeeds ObjectList::CalculateSpeeds(const GameObject& o, float elapsed) con
     return sp;
 }
 
+Vec3f ObjectList::PickCentre(const GameObject& o) const {
+    const float ground = level_ ? level_->map().WorldZ(o.position.x, o.position.y) : o.position.z;
+    const float height = o.stats ? o.stats->Num("CollHeight", o.level) : 0.0f;
+    return {o.position.x, o.position.y, ground - height * 0.5f};
+}
+
+GameObject* ObjectList::PickObject(const Vec3f& origin, const Vec3f& dir) const {
+    GameObject* best = nullptr;
+    float bestT = 0.0f;
+    for (const auto& op : objects_) {
+        GameObject& o = *op;
+        if (o.removed || o.hidden || !o.stats) continue;
+        const float radius = o.stats->Num("PickSphere", o.level);
+        if (radius <= 0.0f) continue;
+        // TODO(buildings): one sphere per block of the building's shape.
+        const Vec3f c = PickCentre(o);
+        const Vec3f oc = c - origin;
+        const float t = Dot(oc, dir);
+        if (t <= 0.0f) continue;
+        const Vec3f closest = origin + dir * t;
+        if (Length(c - closest) > radius) continue;
+        if (!best || t < bestT) {
+            best = &o;
+            bestT = t;
+        }
+    }
+    return best;
+}
+
 bool ObjectList::BlockOf(const GameObject& o, BlockPos& out) const {
     return level_ && level_->map().WorldToBlock(o.position.x, o.position.y, out.x, out.y);
 }
