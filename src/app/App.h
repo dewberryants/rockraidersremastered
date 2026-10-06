@@ -29,6 +29,9 @@ struct LaunchOptions {
     std::string startScene;  // debugging: jump straight to a scene
     std::string startLevel;  // like the original -startlevel
     bool forceWindowed = false;
+    // Scripted input for automated checks: "tick:move:x:y;tick:click;tick:key:NAME;..."
+    // (positions in logical 640x480 coordinates).
+    std::string inputScript;
 };
 
 class App {
@@ -53,6 +56,7 @@ public:
 private:
     void Tick(float elapsed);
     void RenderFrame();
+    void ApplyScriptedInput();
 
     LaunchOptions launch_;
     RemasterOptions options_;
@@ -65,6 +69,8 @@ private:
     std::filesystem::path exeDir_;
     bool quit_ = false;
     int ticks_ = 0;
+    bool scriptedMouse_ = false;
+    float scriptedX_ = 0, scriptedY_ = 0;
 };
 
 App& GetApp();

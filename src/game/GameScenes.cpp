@@ -1,5 +1,8 @@
 #include "game/GameScenes.h"
 
+#include "fs/Path.h"
+#include "game/Game.h"
+#include "game/front/FrontEnd.h"
 #include "gfx/Font.h"
 #include "gfx/Image.h"
 
@@ -14,28 +17,27 @@ public:
         const Config& cfg = GetApp().config();
         background_ = Image::Load(cfg.GetString("Lego*::Main::LoadScreen", ""));
         font_ = Font::Load("Interface\\FrontEnd\\Menu_Font_Hi.bmp");
-        small_ = Font::Load("Interface\\Fonts\\MbriefFont.bmp");
     }
-    void Update(float elapsed) override { time_ += elapsed; }
+    void Update(float) override {}
     void Render(Renderer2D& r) override {
         r.SetAnchor(Anchor::Center);
         if (background_) background_->Draw(r, 0, 0);
-        if (font_) {
-            const char* text = "Start Game";
-            const int w = font_->StringWidth(text);
-            font_->Draw(r, 320.0f - w / 2.0f, 200, text);
-        }
-        if (small_) small_->Draw(r, 20, 20, "Font test: The quick brown fox 0123456789\nSecond line\twith tab");
+        if (font_) font_->Draw(r, 20, 20, "Font test 0123456789");
     }
 
 private:
     std::unique_ptr<Image> background_;
-    std::unique_ptr<Font> font_, small_;
-    float time_ = 0;
+    std::unique_ptr<Font> font_;
 };
 
 }  // namespace
 
-std::unique_ptr<Scene> CreateStartScene() { return std::make_unique<FontTestScene>(); }
+std::unique_ptr<Scene> CreateStartScene() {
+    App& app = GetApp();
+    GetGame().Initialise(app.config());
+    if (EqualsNoCase(app.launch().startScene, "fonttest")) return std::make_unique<FontTestScene>();
+    if (EqualsNoCase(app.launch().startScene, "menu")) GetGame().introsDone = true;  // skip splash screens
+    return front::CreateFrontEndScene();
+}
 
 }  // namespace rr

@@ -3,6 +3,8 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <vector>
 
 #include "core/Log.h"
 #include "fs/FileSystem.h"
@@ -100,11 +102,52 @@ bool App::Init(const LaunchOptions& launch) {
 
 void App::SetScene(std::unique_ptr<Scene> scene) { pendingScene_ = std::move(scene); }
 
+void App::ApplyScriptedInput() {
+    if (launch_.inputScript.empty()) return;
+    size_t start = 0;
+    const std::string& s = launch_.inputScript;
+    while (start < s.size()) {
+        size_t end = s.find(';', start);
+        if (end == std::string::npos) end = s.size();
+        const std::string cmd = s.substr(start, end - start);
+        start = end + 1;
+        std::vector<std::string> f;
+        size_t p = 0;
+        while (p <= cmd.size()) {
+            size_t q = cmd.find(':', p);
+            if (q == std::string::npos) q = cmd.size();
+            f.push_back(cmd.substr(p, q - p));
+            p = q + 1;
+        }
+        if (f.size() < 2 || std::atoi(f[0].c_str()) != ticks_) continue;
+        SDL_Event ev{};
+        if (f[1] == "move" && f.size() >= 4) {
+            scriptedMouse_ = true;
+            scriptedX_ = float(std::atof(f[2].c_str()));
+            scriptedY_ = float(std::atof(f[3].c_str()));
+        } else if (f[1] == "click" || f[1] == "rclick") {
+            ev.button.button = f[1] == "click" ? SDL_BUTTON_LEFT : SDL_BUTTON_RIGHT;
+            ev.type = SDL_MOUSEBUTTONDOWN;
+            input_.HandleEvent(ev);
+            ev.type = SDL_MOUSEBUTTONUP;
+            input_.HandleEvent(ev);
+        } else if (f[1] == "key" && f.size() >= 3) {
+            ev.key.keysym.scancode = SDL_GetScancodeFromName(f[2].c_str());
+            ev.type = SDL_KEYDOWN;
+            input_.HandleEvent(ev);
+            ev.type = SDL_KEYUP;
+            input_.HandleEvent(ev);
+        }
+    }
+    if (scriptedMouse_) input_.SetMousePos(scriptedX_, scriptedY_);
+}
+
 void App::Tick(float elapsed) {
     if (pendingScene_) {
         scene_ = std::move(pendingScene_);
         scene_->OnEnter();
     }
+    ApplyScriptedInput();
     input_.BeginTick();
     if (scene_) scene_->Update(elapsed);
     ++ticks_;

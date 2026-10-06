@@ -18,7 +18,7 @@ target_include_directories(RockRaiders PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(RockRaiders PRIVATE SDL2::SDL2main SDL2::SDL2 OpenGL::GL)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(RockRaiders PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    target_compile_options(RockRaiders PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 endif()
 
 if(WIN32)
