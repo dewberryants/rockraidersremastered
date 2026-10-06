@@ -318,4 +318,18 @@ bool Level::DestroyWall(int x, int y, bool hiddenCavern) {
     return true;
 }
 
+bool Level::ClearRubbleLayer(int x, int y) {
+    Block& b = block(x, y);
+    if (b.flags & BlockFlag::CleanFloor) return true;
+    const uint32_t layers = b.flags & BlockFlag::RubbleMask;
+    if (layers != 0) {
+        b.flags = (b.flags & ~BlockFlag::RubbleMask) | (layers - 1);
+    } else {
+        // Last layer gone. TODO(effects): dust particle; info messages and menus for the block.
+        b.flags |= BlockFlag::CleanFloor;
+    }
+    UpdateSurface(x, y);
+    return layers == 0;
+}
+
 }  // namespace rr::world

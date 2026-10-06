@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,6 +28,9 @@ constexpr uint32_t Selected = 0x200000;
 constexpr uint32_t CanGather = 0x4000000;      // model has Activity_Gather
 constexpr uint32_t CanRouteRubble = 0x10000000;  // model has Activity_RouteRubble
 }  // namespace ObjFlag3
+
+// What a unit is busy doing after arriving somewhere.
+enum class UnitState : uint8_t { Idle, Drilling, Clearing, Collecting, Depositing };
 
 // A live game object (LegoObject). Grows as the game systems are implemented.
 struct GameObject {
@@ -59,6 +63,14 @@ struct GameObject {
     float curveLength = 0.0f, curveDist = 0.0f, curveOverrun = 0.0f;
     Vec2 endTangent;           // end direction of the current curve
     Vec2 faceDir{0.0f, 1.0f};  // facing direction in the ground plane
+
+    // Work in progress (drilling a wall, clearing rubble, picking up / delivering an object).
+    UnitState state = UnitState::Idle;
+    BlockPos stateBlock;
+    GameObject* stateTarget = nullptr;
+    bool singleWidthDig = false;
+    GameObject* carried = nullptr;  // object this unit carries
+    GameObject* carrier = nullptr;  // unit carrying this object
 
     float health = 100.0f;
     float energy = 100.0f;
@@ -110,6 +122,15 @@ public:
     // Builds a block route from the object's position and starts it.
     bool RouteToBlock(GameObject& o, BlockPos target, const Vec2* finalPos = nullptr);
     bool BlockOf(const GameObject& o, BlockPos& out) const;
+    // Starts the work a route action asks for (called when a route reaches its last node).
+    void StartAction(GameObject& o, uint8_t action, BlockPos block, GameObject* target);
+    // Ends the unit's work; success reports to the task system.
+    void FinishAction(GameObject& o, bool success);
+    // Notified when a unit finished (or gave up) the work its task asked for.
+    std::function<void(GameObject&, bool)> onActionDone;
+    // Notified when a carried object is delivered to a building (resources).
+    std::function<void(GameObject& unit, GameObject& delivered, GameObject& building)> onDeposit;
+    void Remove(GameObject& o);
     // Pick sphere centre: half the collision height above the ground under the object.
     Vec3f PickCentre(const GameObject& o) const;
     // Nearest object whose pick sphere the ray passes through (LegoObject_DoPickSphereSelection).
@@ -131,6 +152,7 @@ public:
 
 private:
     void UpdateMovement(GameObject& o, float elapsed);
+    void UpdateAction(GameObject& o, float elapsed);
     void BuildRouteCurve(GameObject& o, bool skipCornerNode);
 
     world::Level* level_ = nullptr;

@@ -33,6 +33,7 @@ constexpr uint32_t Foundation = 0x100000;   // building foundation floor
 constexpr uint32_t CleanFloor = 0x200000;   // floor without rubble (predug caverns)
 constexpr uint32_t Path = 0x20000000;       // built power path
 constexpr uint32_t PoweredFloor = 0x40000000;
+constexpr uint32_t DigRequested = 0x800000; // marked for drilling by the player (highlighted)
 constexpr uint32_t Eroding = 0x80000000;    // lava erosion has reached this block
 }  // namespace BlockFlag
 
@@ -58,6 +59,7 @@ struct Block {
     int16_t random = 0;      // per-block random value drawn at load
     int16_t seamDigs = 0;
     uint8_t crystals = 0, ore = 0;
+    float damage = 0.0f;     // drilling progress, 1.0 = wall breaks (Level_Block_Damage)
 };
 
 struct LevelSettings {
@@ -91,6 +93,8 @@ public:
     void UpdateSurface(int x, int y);
     // Level_DestroyWall: lowers the block's corner points and updates the surroundings.
     bool DestroyWall(int x, int y, bool hiddenCavern);
+    // Removes one rubble layer; returns true once the floor is clean (Level_Block_ClearRubbleLayer).
+    bool ClearRubbleLayer(int x, int y);
 
 private:
     bool LoadPreDug(const std::string& path);

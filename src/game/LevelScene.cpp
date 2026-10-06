@@ -9,6 +9,7 @@
 #include "fs/Path.h"
 #include "game/Game.h"
 #include "game/Messages.h"
+#include "game/ai/Tasks.h"
 #include "game/Pointer.h"
 #include "game/front/FrontEnd.h"
 #include "game/objects/GameObject.h"
@@ -42,6 +43,20 @@ public:
             RR_WARN("Texture set %s not loaded", set.c_str());
 
         LoadObjects(cfg);
+        tasks_.Reset();
+        tasks_.LoadPriorities(cfg, Config::Id(game.gameName, levelId_));
+        objects_.onActionDone = [this](GameObject& u, bool ok) { OnActionDone(u, ok); };
+        objects_.onDeposit = [this](GameObject&, GameObject& item, GameObject&) {
+            // TODO(resources): refinery and building-specific storage, info messages.
+            if (item.type == ObjType::PowerCrystal) ++crystals_;
+            else if (item.type == ObjType::Ore) ++ore_;
+            RR_INFO("Stored %s: crystals %d, ore %d", item.info->name.c_str(), crystals_, ore_);
+        };
+        // Lego_LoadOLObjectList: loose crystals, ore, dynamite and barriers are to be collected.
+        for (const auto& o : objects_.objects())
+            if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore || o->type == ObjType::Dynamite ||
+                o->type == ObjType::Barrier)
+                tasks_.CreateCollect(*o);
         IconPanel& panel = *game.iconPanel;
         panel.BackToMain();
         panel.isEnabled = [this](MenuItem item) { return ItemEnabled(item); };
@@ -164,15 +179,45 @@ public:
             // Hard rock needs a unit that can drill it; immovable rock never.
             return blk.terrain != world::Terrain::Immovable && !(blk.flags & world::BlockFlag::Ground);
         case MenuItem::ClearRubble: return (blk.flags & world::BlockFlag::Ground) && !(blk.flags & world::BlockFlag::CleanFloor);
+        case MenuItem::DeselectDig: return (blk.flags & world::BlockFlag::DigRequested) != 0;
         default: return false;  // TODO(interface): the remaining items as their systems arrive
         }
     }
 
     void OnMenuItem(MenuItem item) {
         IconPanel& panel = *GetGame().iconPanel;
-        RR_INFO("Menu item %s at block %d,%d", MenuItemName(item), panel.block().x, panel.block().y);
-        // TODO(ai): Dig/ClearRubble create AI task requests (AITask_DoDig_AtBlockPos, ...).
+        const BlockPos b = panel.block();
+        RR_INFO("Menu item %s at block %d,%d", MenuItemName(item), b.x, b.y);
+        Task* t = nullptr;
+        switch (item) {
+        case MenuItem::Dig:
+            t = tasks_.CreateDig(level_, b, true);
+            if (t) level_.block(b.x, b.y).flags |= world::BlockFlag::DigRequested;
+            break;
+        case MenuItem::ClearRubble: t = tasks_.CreateClear(b); break;
+        case MenuItem::DeselectDig:
+            level_.block(b.x, b.y).flags &= ~world::BlockFlag::DigRequested;
+            // TODO(ai): AITask_RemoveWallReferences for the block's dig task.
+            break;
+        default: break;
+        }
+        // With units selected the order goes to the primary unit straight away.
+        if (t && selection_.Primary()) tasks_.AssignTo(*t, *selection_.Primary(), objects_, level_);
         panel.BackToMain();
+    }
+
+    void OnActionDone(GameObject& unit, bool success) {
+        if (unit.stateBlock.x >= 0 && success) {
+            world::Block& b = level_.block(unit.stateBlock.x, unit.stateBlock.y);
+            // A drilled-out wall leaves rubble to clear.
+            // TODO(ai): verify when the game queues clearing (Level_DestroyWall callbacks).
+            if ((b.flags & world::BlockFlag::Ground) && !(b.flags & world::BlockFlag::CleanFloor) &&
+                (b.flags & world::BlockFlag::DigRequested)) {
+                b.flags &= ~world::BlockFlag::DigRequested;
+                tasks_.CreateClear(unit.stateBlock);
+            }
+        }
+        tasks_.TaskFinished(unit, success);
     }
 
     static MenuType UnitMenu(const GameObject& o) {
@@ -267,6 +312,7 @@ public:
         GetPointers().Update(elapsed);
         messages_.Update([this](const Message& m) { HandleMessage(m); });
         HandleWorldClick(in);
+        tasks_.Update(objects_, level_, elapsed);
         objects_.Update(elapsed);
         level_.map().UpdateUVs(elapsed);
     }
@@ -358,6 +404,8 @@ private:
     ObjectList objects_;
     MessageQueue messages_;
     Selection selection_;
+    TaskSystem tasks_;
+    int crystals_ = 0, ore_ = 0;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
     float viewAspect_ = 4.0f / 3.0f, uiWidth_ = 640.0f;

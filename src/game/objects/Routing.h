@@ -57,6 +57,11 @@ struct RouteNode {
     uint8_t flags = 0;   // RouteFlag
     uint8_t action = 0;  // what to do on arrival (drill, collect, ...); 0 = nothing
 };
+// What a unit does when it reaches the last node of its route (route action ids of the game).
+namespace RouteAction {
+constexpr uint8_t None = 0, Drill = 1, Reinforce = 2, Collect = 3, Clear = 4, Throw = 5, Repair = 6, Deposit = 7,
+                  Drop = 8, Place = 9, Enter = 10, Eat = 11;
+}
 namespace RouteFlag {
 constexpr uint8_t Last = 0x8;         // final node reached through a zero-length route
 constexpr uint8_t CutCorner = 0x10;   // direction changes with a corner step: skipped while moving

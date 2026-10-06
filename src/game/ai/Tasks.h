@@ -1,0 +1,89 @@
+#pragma once
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+#include "config/Config.h"
+#include "game/objects/Routing.h"
+
+namespace rr {
+
+struct GameObject;
+class ObjectList;
+namespace world {
+class Level;
+}
+
+// Kinds of work units can be given (AITask_Type).
+enum class TaskType : int {
+    Goto, Follow, FollowAttack, Collect, Gather, Deposit, Dump, Request, Dig, Dynamite, Repair, Reinforce, Clear,
+    Wait, AnimationWait, ElecFence, Eat, GotoEat, FindDriver, GetTool, BirdScarer, Upgrade, BuildPath, Train,
+    Depart, AttackPath, AttackRockMonster, Recharge, Dock, AttackObject, FindLoad,
+    Count
+};
+
+// Priority classes; each level orders them in its Priorities block (AI_Priority_*).
+enum class PriorityType : int {
+    Crystal, Ore, DefaultCollect, Destruction, Construction, Request, Reinforce, Repair, Clearing, Storage,
+    Refining, HealthLow, GetIn, Upgrade, BuildPath, AttackRockMonster, Barrier, FindLoad, Recharge,
+    UpgradeBuilding, Gather, Steal, Punch, Depart, AttackPath, AttackObject, Congregate, Train,
+    Count
+};
+const char* PriorityTypeName(PriorityType p);  // "AI_Priority_Crystal"
+
+struct Task {
+    TaskType type = TaskType::Goto;
+    BlockPos block;
+    GameObject* target = nullptr;
+    PriorityType priorityType = PriorityType::DefaultCollect;
+    int priority = 0;          // 0..99, higher first
+    float retryTimer = 0.0f;   // not offered to units while > 0
+    bool userRequested = false;
+    bool singleWidth = false;  // dig a one-unit tunnel (single-width diggers only)
+    bool remove = false;
+    GameObject* assigned = nullptr;
+    bool started = false;
+};
+
+// The pending task list and the per-unit task assignment (AITask_*).
+class TaskSystem {
+public:
+    void Reset();
+    // Priorities_LoadLevel: values 80, 75, 70, ... in list order; FALSE switches a type off.
+    void LoadPriorities(const Config& cfg, std::string_view levelBlock);
+
+    Task* CreateDig(const world::Level& level, BlockPos block, bool userRequested);
+    Task* CreateClear(BlockPos block);
+    Task* CreateCollect(GameObject& object);
+
+    // AITask_UpdateAll: assigns pending tasks to idle units and starts them.
+    void Update(ObjectList& objects, world::Level& level, float elapsed);
+    // Called by the object system when a unit finished or abandoned its task.
+    void TaskFinished(GameObject& unit, bool success);
+    // Drops tasks and assignments that refer to a removed object.
+    void RemoveObject(const GameObject& o);
+
+    Task* TaskOf(const GameObject& unit) const;
+    // Gives a task straight to a unit (orders for selected units); false if it cannot start.
+    bool AssignTo(Task& t, GameObject& unit, ObjectList& objects, world::Level& level) {
+        return !t.assigned && Start(t, unit, objects, level);
+    }
+    const std::vector<std::unique_ptr<Task>>& tasks() const { return tasks_; }
+
+private:
+    bool CanDo(const Task& t, const GameObject& unit, const world::Level& level) const;
+    bool Start(Task& t, GameObject& unit, ObjectList& objects, world::Level& level);
+    Vec2 TaskPosition(const Task& t, const world::Level& level) const;
+
+    std::vector<std::unique_ptr<Task>> tasks_;
+    std::array<int, size_t(PriorityType::Count)> priorityValue_{};
+    std::array<bool, size_t(PriorityType::Count)> priorityOff_{};
+    unsigned approachCounter_ = 0;  // rotates the side units approach walls from
+};
+
+// Drill time for a terrain in game units (0 = cannot drill); stats seconds are scaled by 25.
+float DrillTime(const GameObject& unit, int terrain);
+
+}  // namespace rr

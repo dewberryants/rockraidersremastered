@@ -7,6 +7,7 @@
 #include "core/Log.h"
 #include "core/Random.h"
 #include "fs/Path.h"
+#include "game/ai/Tasks.h"
 #include "game/world/Level.h"
 #include "gfx/Renderer3D.h"
 #include "gfx/model/ModelDraw.h"
@@ -200,9 +201,129 @@ void ObjectList::Update(float elapsed) {
         o.MoveAnimation(elapsed, CalculateSpeeds(o, elapsed).anim);
         if (o.routing) {
             UpdateMovement(o, elapsed);
-            // TODO(activities): carry, rubble-route and panic variants.
-            if (o.routing) o.SetActivity(ActivityType::Route);
+            // TODO(activities): rubble-route and panic variants.
+            if (o.routing) o.SetActivity(o.carried ? ActivityType::Carry : ActivityType::Route);
+        } else if (o.state != UnitState::Idle) {
+            UpdateAction(o, elapsed);
+        } else if (o.carried && o.activity == ActivityType::Stand) {
+            o.SetActivity(ActivityType::CarryStand);
         }
+    }
+    // Carried objects ride in front of their carrier.
+    // TODO(carry): attach to the carrier's carry null instead of a fixed offset.
+    for (auto& op : objects_) {
+        GameObject& o = *op;
+        if (!o.carrier) continue;
+        const GameObject& c = *o.carrier;
+        o.position = {c.position.x + c.faceDir.x * 4.0f, c.position.y + c.faceDir.y * 4.0f, c.position.z - 8.0f};
+        o.heading = c.heading;
+    }
+}
+
+void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, GameObject* target) {
+    o.stateBlock = block;
+    o.stateTarget = target;
+    switch (action) {
+    case RouteAction::Drill:
+        o.state = UnitState::Drilling;
+        o.SetActivity(ActivityType::Drill);
+        break;
+    case RouteAction::Clear:
+        o.state = UnitState::Clearing;
+        // Minifigures sweep the rubble twice per layer.
+        o.SetActivity(ActivityType::Clear, o.type == ObjType::MiniFigure ? 2 : 0);
+        break;
+    case RouteAction::Collect:
+        o.state = UnitState::Collecting;
+        o.SetActivity(ActivityType::Collect);
+        break;
+    case RouteAction::Deposit:
+        o.state = UnitState::Depositing;
+        o.SetActivity(ActivityType::Deposit);
+        break;
+    default: FinishAction(o, true); break;
+    }
+}
+
+void ObjectList::FinishAction(GameObject& o, bool success) {
+    o.state = UnitState::Idle;
+    o.stateTarget = nullptr;
+    o.SetActivity(o.carried ? ActivityType::CarryStand : ActivityType::Stand);
+    if (onActionDone) onActionDone(o, success);
+}
+
+void ObjectList::Remove(GameObject& o) {
+    o.removed = true;
+    if (o.carrier) o.carrier->carried = nullptr;
+    if (o.carried) o.carried->carrier = nullptr;
+    o.carrier = o.carried = nullptr;
+    for (auto& op : objects_)
+        if (op->stateTarget == &o) op->stateTarget = nullptr;
+}
+
+void ObjectList::UpdateAction(GameObject& o, float elapsed) {
+    world::Level& level = *level_;
+    switch (o.state) {
+    case UnitState::Drilling: {
+        world::Block& b = level.block(o.stateBlock.x, o.stateBlock.y);
+        if ((b.flags & world::BlockFlag::Ground) || !(b.flags & world::BlockFlag::Wall)) {
+            FinishAction(o, true);  // someone else finished it
+            break;
+        }
+        o.SetActivity(ActivityType::Drill);
+        float time = DrillTime(o, int(b.terrain));
+        if (time <= 0.0f) {
+            FinishAction(o, false);
+            break;
+        }
+        if (o.singleWidthDig) time *= 0.5f;
+        // Level_Block_Damage: progress by elapsed over the drill time; the wall breaks past 1.
+        // TODO(drilling): drill sounds, single-width tunnels (Level_DestroyWallConnection).
+        b.damage += elapsed / time;
+        if (b.damage > 1.0f) {
+            level.DestroyWall(o.stateBlock.x, o.stateBlock.y, false);
+            FinishAction(o, true);
+        }
+        break;
+    }
+    case UnitState::Clearing:
+        if (o.animOverrun > 0.0f) {
+            if (level.ClearRubbleLayer(o.stateBlock.x, o.stateBlock.y)) {
+                FinishAction(o, true);
+            } else {
+                o.activity = ActivityType::Count;  // replay the sweep for the next layer
+                o.SetActivity(ActivityType::Clear, o.type == ObjType::MiniFigure ? 2 : 0);
+            }
+        }
+        break;
+    case UnitState::Collecting:
+        if (o.animOverrun > 0.0f) {
+            GameObject* t = o.stateTarget;
+            if (t && !t->removed && !t->carrier && !o.carried) {
+                o.carried = t;
+                t->carrier = &o;
+                FinishAction(o, true);
+            } else {
+                FinishAction(o, false);
+            }
+        }
+        break;
+    case UnitState::Depositing:
+        if (o.animOverrun > 0.0f) {
+            GameObject* building = o.stateTarget;
+            if (o.carried && building) {
+                GameObject& item = *o.carried;
+                o.carried = nullptr;
+                item.carrier = nullptr;
+                if (onDeposit) onDeposit(o, item, *building);
+                Remove(item);
+                FinishAction(o, true);
+            } else {
+                FinishAction(o, false);
+            }
+        }
+        break;
+    case UnitState::Idle: break;
     }
 }
 
@@ -335,9 +456,10 @@ void ObjectList::UpdateMovement(GameObject& o, float elapsed) {
     }
     if (o.curveDist >= o.curveLength) {
         if (o.routeLastLeg) {
-            // TODO(ai): arrival actions (drill, collect, deposit, ...) by node action.
+            const RouteNode last = o.route.back();
             o.routeLastLeg = false;
             RouteEnd(o, true);
+            if (last.action != RouteAction::None) StartAction(o, last.action, last.block, o.stateTarget);
             return;
         }
         bool skip = false;
@@ -371,6 +493,23 @@ void ObjectList::UpdateMovement(GameObject& o, float elapsed) {
     o.position.x = p.x;
     o.position.y = p.y;
     o.position.z = level_->map().WorldZ(p.x, p.y);
+
+    // Heading into a wall to drill: stop once the drill reaches the wall block.
+    // TODO(drilling): use the model's drill null instead of a reach from the collision radius.
+    const RouteNode& last = o.route.back();
+    if (last.action == RouteAction::Drill && size_t(o.routeIndex) + 1 >= o.route.size()) {
+        const float reach = (o.stats ? o.stats->Num("CollRadius", o.level, 5.0f) : 5.0f) * 1.5f;
+        BlockPos tip;
+        if (level_->map().WorldToBlock(p.x + o.faceDir.x * reach, p.y + o.faceDir.y * reach, tip.x, tip.y) &&
+            tip == last.block) {
+            const BlockPos wall = last.block;
+            RouteEnd(o, true);
+            // Face the wall squarely while drilling.
+            const Vec2 c = level_->map().BlockCentre(wall.x, wall.y);
+            o.Face({c.x - o.position.x, c.y - o.position.y});
+            StartAction(o, RouteAction::Drill, wall, nullptr);
+        }
+    }
 }
 
 void ObjectList::Draw(Renderer3D& r) const {
