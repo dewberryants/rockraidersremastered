@@ -18,9 +18,13 @@ namespace rr {
 //  - otherwise the loose file "<game>\Data\<path>" is used;
 //  - writes always go to the loose Data directory.
 // Paths are game-relative ("Levels\GameLevels\Level01\01.txt"), case-insensitive, '\' or '/'.
+//
+// Remaster addition: override directories (mods, HD replacements) are searched before everything
+// else, in the order they were added. They mirror the Data\ layout.
 class FileSystem {
 public:
     bool Mount(const std::filesystem::path& gameDir, std::string_view programName = "LegoRR");
+    void AddOverrideDir(const std::filesystem::path& dir);
 
     std::optional<std::vector<uint8_t>> ReadAll(std::string_view path) const;
     std::optional<std::string> ReadText(std::string_view path) const;
@@ -36,8 +40,11 @@ public:
     const std::filesystem::path& DataDir() const { return dataDir_; }
 
 private:
+    static std::filesystem::path FindUnder(const std::filesystem::path& root, std::string_view path);
+
     std::filesystem::path gameDir_;
     std::filesystem::path dataDir_;
+    std::vector<std::filesystem::path> overrideDirs_;
     std::vector<std::unique_ptr<Wad>> wads_;  // ordered highest priority first
 };
 

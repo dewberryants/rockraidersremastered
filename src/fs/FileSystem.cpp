@@ -33,24 +33,24 @@ bool FileSystem::Mount(const fsys::path& gameDir, std::string_view programName) 
     return true;
 }
 
-bool FileSystem::ExistsInWad(std::string_view path) const {
-    const std::string key = NormalizeGamePath(path);
-    for (const auto& wad : wads_)
-        if (wad->Find(key)) return true;
-    return false;
+void FileSystem::AddOverrideDir(const fsys::path& dir) {
+    std::error_code ec;
+    if (!fsys::is_directory(dir, ec)) return;
+    overrideDirs_.push_back(dir);
+    RR_INFO("Override directory: %s", dir.string().c_str());
 }
 
-fsys::path FileSystem::FindOnDisk(std::string_view path) const {
+// Finds a game path under a directory, matching each component case-insensitively.
+fsys::path FileSystem::FindUnder(const fsys::path& root, std::string_view path) {
     const std::string clean = CleanGamePath(path);
+    if (clean.empty()) return {};
     std::error_code ec;
-    fsys::path direct = dataDir_ / fsys::path(clean).make_preferred();
+    const fsys::path direct = root / fsys::path(clean).make_preferred();
+    if (fsys::is_regular_file(direct, ec)) return direct;
 #ifdef _WIN32
-    if (fsys::is_regular_file(direct, ec)) return direct;
-    return {};
+    return {};  // the Windows file system is already case-insensitive
 #else
-    if (fsys::is_regular_file(direct, ec)) return direct;
-    // Case-insensitive walk for case-sensitive file systems.
-    fsys::path cur = dataDir_;
+    fsys::path cur = root;
     size_t start = 0;
     while (start <= clean.size()) {
         size_t end = clean.find('\\', start);
@@ -71,6 +71,15 @@ fsys::path FileSystem::FindOnDisk(std::string_view path) const {
 #endif
 }
 
+bool FileSystem::ExistsInWad(std::string_view path) const {
+    const std::string key = NormalizeGamePath(path);
+    for (const auto& wad : wads_)
+        if (wad->Find(key)) return true;
+    return false;
+}
+
+fsys::path FileSystem::FindOnDisk(std::string_view path) const { return FindUnder(dataDir_, path); }
+
 fsys::path FileSystem::PathForWrite(std::string_view path) const {
     fsys::path target = dataDir_ / fsys::path(CleanGamePath(path)).make_preferred();
     std::error_code ec;
@@ -78,7 +87,19 @@ fsys::path FileSystem::PathForWrite(std::string_view path) const {
     return target;
 }
 
+namespace {
+std::optional<std::vector<uint8_t>> ReadDiskFile(const fsys::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return std::nullopt;
+    return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+}  // namespace
+
 std::optional<std::vector<uint8_t>> FileSystem::ReadAll(std::string_view path) const {
+    for (const auto& dir : overrideDirs_) {
+        const fsys::path p = FindUnder(dir, path);
+        if (!p.empty()) return ReadDiskFile(p);
+    }
     const std::string key = NormalizeGamePath(path);
     for (const auto& wad : wads_) {
         if (const Wad::Entry* e = wad->Find(key)) {
@@ -89,9 +110,7 @@ std::optional<std::vector<uint8_t>> FileSystem::ReadAll(std::string_view path) c
     }
     const fsys::path disk = FindOnDisk(path);
     if (disk.empty()) return std::nullopt;
-    std::ifstream in(disk, std::ios::binary);
-    if (!in) return std::nullopt;
-    return std::vector<uint8_t>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    return ReadDiskFile(disk);
 }
 
 std::optional<std::string> FileSystem::ReadText(std::string_view path) const {
@@ -100,6 +119,10 @@ std::optional<std::string> FileSystem::ReadText(std::string_view path) const {
     return std::string(bytes->begin(), bytes->end());
 }
 
-bool FileSystem::Exists(std::string_view path) const { return ExistsInWad(path) || !FindOnDisk(path).empty(); }
+bool FileSystem::Exists(std::string_view path) const {
+    for (const auto& dir : overrideDirs_)
+        if (!FindUnder(dir, path).empty()) return true;
+    return ExistsInWad(path) || !FindOnDisk(path).empty();
+}
 
 }  // namespace rr
