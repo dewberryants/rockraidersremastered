@@ -77,6 +77,35 @@ public:
         }
     }
 
+    // Ray from a logical screen position into the 3D view, marched until it passes below the
+    // terrain surface (+Z points down).
+    bool PickGround(float lx, float ly, Vec3f& hit) const {
+        const world::TopDownCamera::View view = camera_.Compute(&level_.map());
+        const float ndcX = lx / uiWidth_ * 2.0f - 1.0f, ndcY = 1.0f - ly / 480.0f * 2.0f;
+        const float tanX = 0.5f, tanY = 0.5f / viewAspect_;
+        const Vec3f f = Normalize(view.forward);
+        const Vec3f s = Normalize(Cross(view.up, f));
+        const Vec3f u = Cross(f, s);
+        const Vec3f dir = Normalize(f + s * (ndcX * tanX) + u * (ndcY * tanY));
+        const world::Map3D& map = level_.map();
+        auto below = [&](float t) {
+            const Vec3f p = view.eye + dir * t;
+            return p.z >= map.WorldZ(p.x, p.y);
+        };
+        constexpr float kStep = 2.0f;
+        for (float t = kStep; t < clipDist_; t += kStep) {
+            if (!below(t)) continue;
+            float lo = t - kStep, hi = t;
+            for (int i = 0; i < 12; ++i) {
+                const float mid = (lo + hi) * 0.5f;
+                (below(mid) ? hi : lo) = mid;
+            }
+            hit = view.eye + dir * hi;
+            return true;
+        }
+        return false;
+    }
+
     void Update(float elapsed) override {
         Input& in = GetApp().input();
         if (in.KeyPressed(SDL_SCANCODE_ESCAPE)) {
@@ -101,6 +130,21 @@ public:
         if (in.KeyDown(SDL_SCANCODE_PAGEDOWN)) camera_.tilt = std::max(camera_.tilt - 0.02f * elapsed, camera_.minTilt);
         if (in.wheel()) camera_.zoom = std::clamp(camera_.zoom - float(in.wheel()) * 10.0f, camera_.minZoom, camera_.maxZoom);
         GetPointers().Update(elapsed);
+        // Debug orders until the interface exists: right-click sends the first minifigure there.
+        if (in.rightReleased()) {
+            Vec3f hit;
+            BlockPos b;
+            if (PickGround(in.mouseX(), in.mouseY(), hit) && level_.map().WorldToBlock(hit.x, hit.y, b.x, b.y)) {
+                for (const auto& o : objects_.objects()) {
+                    if (o->type != ObjType::MiniFigure) continue;
+                    const Vec2 final{hit.x, hit.y};
+                    const bool ok = objects_.RouteToBlock(*o, b, &final);
+                    RR_INFO("Route %s to block %d,%d: %s (%zu nodes)", o->info->name.c_str(), b.x, b.y,
+                            ok ? "ok" : "no route", o->route.size());
+                    break;
+                }
+            }
+        }
         objects_.Update(elapsed);
         level_.map().UpdateUVs(elapsed);
     }
@@ -127,6 +171,8 @@ public:
         const world::TopDownCamera::View view = camera_.Compute(&level_.map());
         // Direct3D Retained Mode default field of view: tan(half horizontal angle) = 0.5.
         const float aspect = float(vw) / float(std::max(1, vh));
+        viewAspect_ = aspect;
+        uiWidth_ = r2d.uiWidth();
         const float fovY = 2.0f * std::atan(0.5f / aspect);
         const Mat4 proj = Mat4::Perspective(fovY, aspect, 1.0f, clipDist_);
         renderer_.BeginFrame(vx, vy, vw, vh, LookDirLH(view.eye, view.forward, view.up), proj, view.eye);
@@ -179,6 +225,7 @@ private:
     ObjectList objects_;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
+    float viewAspect_ = 4.0f / 3.0f, uiWidth_ = 640.0f;
     bool failed_ = false;
 };
 

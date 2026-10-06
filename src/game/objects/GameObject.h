@@ -8,6 +8,7 @@
 #include "core/Math3D.h"
 #include "game/objects/ObjectRegistry.h"
 #include "game/objects/ObjectTypes.h"
+#include "game/objects/Routing.h"
 #include "game/objects/Stats.h"
 
 namespace rr {
@@ -48,6 +49,16 @@ struct GameObject {
     const Activity* anim = nullptr;
     const Activity* anim2 = nullptr;
 
+    // Routing: the block route, the curve towards the current node and the distance along it.
+    std::vector<RouteNode> route;
+    int routeIndex = 0;
+    bool routing = false;      // following a route
+    bool routeLastLeg = false; // moving towards the final node
+    BezierCurve curve;
+    float curveLength = 0.0f, curveDist = 0.0f, curveOverrun = 0.0f;
+    Vec2 endTangent;           // end direction of the current curve
+    Vec2 faceDir{0.0f, 1.0f};  // facing direction in the ground plane
+
     float health = 100.0f;
     float energy = 100.0f;
     uint32_t flags3 = 0;
@@ -62,9 +73,18 @@ struct GameObject {
     }
     // Applies a pending activity; returns true if the model has an animation for it.
     bool UpdateActivityChange();
-    // Advances the current animation by `elapsed` game units (25 per second = one LWS frame).
-    void MoveAnimation(float elapsed);
+    // Advances the current animation. elapsed is in game units (25 per second = one LWS frame);
+    // animSpeed is the already scaled amount for the main part (ObjectSpeeds::anim).
+    void MoveAnimation(float elapsed, float animSpeed);
     bool HasActivity(ActivityType a) const;
+    // Faces a ground direction (heading 0 = +Y, increasing towards +X).
+    void Face(Vec2 dir);
+};
+
+// Per-tick distances from LegoObject_CalculateSpeeds: route = ground covered, anim = animation
+// frames advanced (route speed over the animation's TransCoef, so steps match the ground).
+struct ObjectSpeeds {
+    float route = 0.0f, anim = 0.0f;
 };
 
 // Object placed in a hidden cavern; created when the cavern is uncovered (HiddenObject_Add).
@@ -81,6 +101,14 @@ class ObjectList {
 public:
     GameObject* Create(const ObjectTypeInfo& info);
     void SetPositionAndHeading(GameObject& o, float x, float y, float heading);
+    ObjectSpeeds CalculateSpeeds(const GameObject& o, float elapsed) const;
+
+    // Routing (LegoObject_Route_Begin/End/UpdateMovement). finalPos places the last node exactly.
+    bool RouteBegin(GameObject& o, const std::vector<BlockPos>& blocks, const Vec2* finalPos = nullptr);
+    void RouteEnd(GameObject& o, bool completed);
+    // Builds a block route from the object's position and starts it.
+    bool RouteToBlock(GameObject& o, BlockPos target, const Vec2* finalPos = nullptr);
+    bool BlockOf(const GameObject& o, BlockPos& out) const;
     void Update(float elapsed);
     void Draw(Renderer3D& r) const;
     void Clear();
@@ -97,6 +125,9 @@ public:
     const std::vector<HiddenObject>& hiddenObjects() const { return hidden_; }
 
 private:
+    void UpdateMovement(GameObject& o, float elapsed);
+    void BuildRouteCurve(GameObject& o, bool skipCornerNode);
+
     world::Level* level_ = nullptr;
     std::vector<std::unique_ptr<GameObject>> objects_;
     std::vector<HiddenObject> hidden_;

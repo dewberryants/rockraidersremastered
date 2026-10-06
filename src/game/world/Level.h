@@ -38,6 +38,7 @@ constexpr uint32_t Eroding = 0x80000000;    // lava erosion has reached this blo
 
 // Second flag word.
 namespace BlockFlag2 {
+constexpr uint32_t ToolStoreEntrance = 0x4;  // only units with EnterToolStore may route through
 constexpr uint32_t SlugHole = 0x20;
 constexpr uint32_t Powered = 0x100;
 constexpr uint32_t HiddenSlugHole = 0x200;

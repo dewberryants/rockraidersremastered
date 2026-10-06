@@ -5,6 +5,7 @@
 
 #include "config/Config.h"
 #include "core/Log.h"
+#include "core/Random.h"
 #include "fs/Path.h"
 #include "game/world/Level.h"
 #include "gfx/Renderer3D.h"
@@ -56,17 +57,13 @@ bool GameObject::UpdateActivityChange() {
     return found;
 }
 
-void GameObject::MoveAnimation(float elapsed) {
-    // LegoObject_CalculateSpeeds: unit animations play at route speed / TransCoef so walk cycles
-    // match their movement; simple objects animate at game speed.
-    float animSpeed = elapsed;
-    if (!(flags3 & ObjFlag3::SimpleObject) && type != ObjType::UpgradePart && stats) {
-        const float transCoef = anim ? anim->transCoef : 0.0f;
-        float routeSpeed = stats->Num("RouteSpeed", level);
-        // TODO(movement): carrying/stealth/slowed flags, rubble, path and lake coefficients.
-        animSpeed = (transCoef == 0.0f ? 1.0f : routeSpeed / transCoef) * elapsed;
-    }
+void GameObject::Face(Vec2 dir) {
+    if (dir.x == 0.0f && dir.y == 0.0f) return;
+    faceDir = dir;
+    heading = std::atan2(dir.x, dir.y);
+}
 
+void GameObject::MoveAnimation(float elapsed, float animSpeed) {
     if (flags3 & ObjFlag3::SimpleObject) {
         // LegoObject_SimpleObject_MoveAnimation (boulders rolling, crystals spinning...).
         if (type == ObjType::PowerCrystal) spin += elapsed * 0.01f;  // TODO(carry): not while carried
@@ -87,6 +84,35 @@ void GameObject::MoveAnimation(float elapsed) {
     }
     if (animRepeat > 1 && over != 0.0f) over -= FrameCount(anim ? anim : anim2) * float(animRepeat - 1);
     animOverrun = over;
+}
+
+ObjectSpeeds ObjectList::CalculateSpeeds(const GameObject& o, float elapsed) const {
+    ObjectSpeeds sp;
+    if ((o.flags3 & ObjFlag3::SimpleObject) || o.type == ObjType::UpgradePart || !o.stats) {
+        sp.anim = elapsed;
+        return sp;
+    }
+    // TODO(movement): drilling, carrying, reversing and stealth slow-downs (route speed flags).
+    float route = o.stats->Num("RouteSpeed", o.level);
+    BlockPos b;
+    if (BlockOf(o, b)) {
+        const world::Block& blk = level_->block(b.x, b.y);
+        // Rubble: each layer takes a quarter of (1 - RubbleCoef); clean floor has none.
+        const int layers =
+            (blk.flags & world::BlockFlag::CleanFloor) ? 0 : int(blk.flags & world::BlockFlag::RubbleMask) + 1;
+        float coef = 1.0f - (1.0f - o.stats->Num("RubbleCoef", o.level, 1.0f)) * (float(layers) * 0.25f);
+        if (blk.flags & world::BlockFlag::Path) coef *= o.stats->Num("PathCoef", o.level, 1.0f);
+        // TODO(lakes): minifigures wading through lake blocks slow down with depth.
+        if (blk.flags & world::BlockFlag::Ground) route *= coef;
+    }
+    const float transCoef = o.anim ? o.anim->transCoef : 0.0f;
+    sp.anim = (transCoef == 0.0f ? 1.0f : route / transCoef) * elapsed;
+    sp.route = route * elapsed;
+    return sp;
+}
+
+bool ObjectList::BlockOf(const GameObject& o, BlockPos& out) const {
+    return level_ && level_->map().WorldToBlock(o.position.x, o.position.y, out.x, out.y);
 }
 
 GameObject* ObjectList::Create(const ObjectTypeInfo& info) {
@@ -138,11 +164,184 @@ void ObjectList::SetPositionAndHeading(GameObject& o, float x, float y, float he
 }
 
 void ObjectList::Update(float elapsed) {
-    for (auto& o : objects_) {
-        if (o->removed) continue;
-        o->UpdateActivityChange();
-        o->MoveAnimation(elapsed);
+    for (auto& op : objects_) {
+        GameObject& o = *op;
+        if (o.removed) continue;
+        o.UpdateActivityChange();
+        o.MoveAnimation(elapsed, CalculateSpeeds(o, elapsed).anim);
+        if (o.routing) {
+            UpdateMovement(o, elapsed);
+            // TODO(activities): carry, rubble-route and panic variants.
+            if (o.routing) o.SetActivity(ActivityType::Route);
+        }
     }
+}
+
+bool ObjectList::RouteToBlock(GameObject& o, BlockPos target, const Vec2* finalPos) {
+    BlockPos start;
+    if (!level_ || !BlockOf(o, start)) return false;
+    std::vector<BlockPos> blocks;
+    if (!BuildRouteList(*level_, &o, start, target, blocks)) return false;
+    return RouteBegin(o, blocks, finalPos);
+}
+
+namespace {
+// Direction from block b to neighbour a (8-neighbourhood), -1 if not adjacent.
+int NeighbourDirection(BlockPos a, BlockPos b) {
+    const int dx = b.x - a.x, dy = b.y - a.y;
+    static const int kDx[8] = {0, 1, 0, -1, 1, 1, -1, -1};
+    static const int kDy[8] = {-1, 0, 1, 0, -1, 1, 1, -1};
+    for (int i = 0; i < 8; ++i)
+        if (kDx[i] == dx && kDy[i] == dy) return i;
+    return -1;
+}
+}  // namespace
+
+bool ObjectList::RouteBegin(GameObject& o, const std::vector<BlockPos>& blocks, const Vec2* finalPos) {
+    if (!level_ || blocks.empty()) return false;
+    // TODO(objects): refuse while the object is busy (driving, being carried, frozen, ...).
+    const bool avoidance =
+        o.stats && (o.stats->F1(o.level) & StatsFlag1::RouteAvoidance) && !(o.flags3 & 0x1000);
+    const float bs = level_->map().blockSize();
+    std::vector<RouteNode> nodes(blocks.size());
+    int prevDir = -1;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        RouteNode& n = nodes[i];
+        n.block = blocks[i];
+        if (finalPos && i + 1 == blocks.size()) {
+            // Position inside the final block as a 0..1 fraction.
+            const Vec2 c = level_->map().BlockCentre(n.block.x, n.block.y);
+            n.offset = {(finalPos->x - c.x) / bs + 0.5f, (c.y - finalPos->y) / bs + 0.5f};
+        } else if (avoidance) {
+            // Spread units across the block so they do not all walk the centre line.
+            n.offset.x = random::RandRange(0.3f, 0.7f);
+            n.offset.y = random::RandRange(0.3f, 0.7f);
+        }
+        if (i + 1 < blocks.size()) {
+            const int dir = NeighbourDirection(blocks[i + 1], blocks[i]);
+            if (dir == -1) return false;  // not a connected route
+            if (i != 0 && dir != prevDir &&
+                GetCrossTerrainType(*level_, &o, blocks[i + 1].x, blocks[i + 1].y, blocks[i - 1].x,
+                                    blocks[i - 1].y, false) == CrossType::Corner)
+                n.flags |= RouteFlag::CutCorner;
+            prevDir = dir;
+        }
+    }
+    RouteEnd(o, false);
+    o.route = std::move(nodes);
+    o.routing = true;
+    o.routeIndex = 0;
+    o.curveDist = 0.0f;
+    o.curveLength = 0.0f;
+    return true;
+}
+
+void ObjectList::RouteEnd(GameObject& o, bool completed) {
+    if (!o.route.empty()) {
+        // TODO(ai): abandoned routes release carried boulders, busy blocks and dynamite tasks;
+        // AITask_Route_End reports the result to the task system.
+        if (completed && o.type == ObjType::MiniFigure) o.Face(o.endTangent);
+        o.route.clear();
+    }
+    o.routeIndex = 0;
+    o.curveLength = o.curveDist = o.curveOverrun = 0.0f;
+    o.routing = false;
+    o.routeLastLeg = false;
+    o.SetActivity(ActivityType::Stand);
+}
+
+void ObjectList::BuildRouteCurve(GameObject& o, bool skipCornerNode) {
+    const world::Map3D& map = level_->map();
+    const float bs = map.blockSize();
+    // The curve bends from the block the object comes from towards the node position.
+    BlockPos from;
+    if (skipCornerNode) {
+        from = o.route[size_t(o.routeIndex)].block;
+        ++o.routeIndex;
+    } else if (!BlockOf(o, from)) {
+        from = o.route[size_t(o.routeIndex)].block;
+    }
+    const RouteNode& node = o.route[size_t(o.routeIndex)];
+    const Vec2 nodeCentre = map.BlockCentre(node.block.x, node.block.y);
+    const Vec2 fromCentre = map.BlockCentre(from.x, from.y);
+    // TODO(drilling): approaching a wall stops short of it (and nudges into inner corners).
+    const Vec2 offset{(node.offset.x - 0.5f) * bs, (node.offset.y - 0.5f) * bs};
+    const Vec2 target{nodeCentre.x + offset.x, nodeCentre.y - offset.y};
+    const Vec2 pos{o.position.x, o.position.y};
+
+    Vec2 endDir;
+    if ((node.flags & RouteFlag::Last) && (offset.x != 0.0f || offset.y != 0.0f)) {
+        endDir = offset;
+    } else {
+        endDir = {target.x - fromCentre.x, target.y - fromCentre.y};
+        if (endDir.x == 0.0f && endDir.y == 0.0f) endDir = {target.x - pos.x, target.y - pos.y};
+    }
+    // TODO(movement): sharp turns play TurnLeft/TurnRight first, units can reverse (CanTurn).
+
+    const float dx = pos.x - target.x, dy = pos.y - target.y;
+    const float len = std::sqrt(dx * dx + dy * dy) * 0.2f;
+    if (len <= 0.1f) {
+        o.curve.points.assign(1, pos);
+    } else {
+        Vec2 startDir = o.faceDir;
+        if (!std::isfinite(startDir.x)) startDir = {1.0f, 0.0f};
+        auto setLength = [](Vec2 v, float l) {
+            const float m = std::sqrt(v.x * v.x + v.y * v.y) / l;
+            return Vec2{v.x / m, v.y / m};
+        };
+        startDir = setLength(startDir, len);
+        endDir = setLength(endDir, len * 1.6f);
+        o.curve.Build(pos, startDir, target, endDir, BezierCurve::kMaxPoints);
+        // TODO(movement): curves clipping solid blocks are straightened (Route_CurveSolid).
+    }
+    o.curveLength = o.curve.UpdateDistances();
+    o.endTangent = endDir;
+    o.curveDist = o.curveOverrun;
+}
+
+void ObjectList::UpdateMovement(GameObject& o, float elapsed) {
+    if (o.route.empty()) {
+        RouteEnd(o, false);
+        return;
+    }
+    if (o.curveDist >= o.curveLength) {
+        if (o.routeLastLeg) {
+            // TODO(ai): arrival actions (drill, collect, deposit, ...) by node action.
+            o.routeLastLeg = false;
+            RouteEnd(o, true);
+            return;
+        }
+        bool skip = false;
+        if (o.route.size() < 2) {
+            o.routeLastLeg = true;
+            o.route[size_t(o.routeIndex)].flags |= RouteFlag::Last;
+        } else {
+            ++o.routeIndex;
+            const RouteNode& n = o.route[size_t(o.routeIndex)];
+            skip = (n.flags & RouteFlag::CutCorner) && n.action != 1;
+        }
+        BuildRouteCurve(o, skip);
+        if (size_t(o.routeIndex) + 1 >= o.route.size()) o.routeLastLeg = true;
+    }
+
+    const ObjectSpeeds sp = CalculateSpeeds(o, elapsed);
+    o.curveDist += sp.route;
+    if (o.curveDist > o.curveLength) {
+        o.curveOverrun = o.curveDist - o.curveLength;
+        o.curveDist = o.curveLength;
+    }
+    Vec2 p;
+    o.curve.Interpolate(o.curveDist, p);
+    // TODO(collision): bumping into other objects (LegoObject_DoCollisionCallbacks).
+    // LegoObject_UpdateRoutingVectors: face along the step just taken.
+    const Vec2 step{p.x - o.position.x, p.y - o.position.y};
+    if (step.x != 0.0f || step.y != 0.0f) {
+        const float m = std::sqrt(step.x * step.x + step.y * step.y);
+        o.Face({step.x / m, step.y / m});
+    }
+    o.position.x = p.x;
+    o.position.y = p.y;
+    o.position.z = level_->map().WorldZ(p.x, p.y);
 }
 
 void ObjectList::Draw(Renderer3D& r) const {
