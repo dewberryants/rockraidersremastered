@@ -1,0 +1,90 @@
+#pragma once
+
+#include <array>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "config/Config.h"
+#include "gfx/Image.h"
+
+namespace rr {
+
+class Font;
+class Input;
+
+// Screen panels of the level interface (Panel_Type).
+enum class PanelType : int {
+    Radar, RadarFill, RadarOverlay, Messages, MessagesSide, CrystalSideBar, TopPanel, Information, PriorityList,
+    CameraControl, InfoDock, Encyclopedia,
+    Count
+};
+
+// Panel buttons (PanelButton_*), named "<panel>_<button>" in the config.
+enum class PanelButton : int {
+    RadarToggle, RadarTaggedObjectView, RadarZoomIn, RadarZoomOut, RadarMapView, InfoDockGoto, InfoDockClose,
+    TopPanelOptions, TopPanelPriorities, TopPanelCallToArms, InformationToggle, InformationFunction,
+    PriorityListDisable1, PriorityListDisable2, PriorityListDisable3, PriorityListDisable4, PriorityListDisable5,
+    PriorityListDisable6, PriorityListDisable7, PriorityListDisable8, PriorityListDisable9, PriorityListUpOne1,
+    PriorityListUpOne2, PriorityListUpOne3, PriorityListUpOne4, PriorityListUpOne5, PriorityListUpOne6,
+    PriorityListUpOne7, PriorityListUpOne8, PriorityListClose, PriorityListReset, EncyclopediaClose,
+    CameraControlZoomIn, CameraControlZoomOut, CameraControlCycleBuildings, CameraControlRotate,
+    CrystalSideBarOre, CrystalSideBarCrystals,
+    Count
+};
+
+// The level HUD panels (Panel_*): images that slide between an open and a closed position,
+// their buttons, and the crystal side bar with its crystal column and ore meter.
+class Panels {
+public:
+    void Load(const Config& cfg, std::string_view gameName);
+    void Reset();  // every panel closed (Panel_ResetAll)
+
+    void Toggle(PanelType p);
+    bool IsOpen(PanelType p) const { return panels_[size_t(p)].open; }
+
+    // Hover/press state and clicks; returns true if the mouse is over a panel.
+    bool HandleInput(const Input& in);
+    std::function<void(PanelButton)> onButton;
+    const std::string& hoverToolTip() const { return hoverToolTip_; }
+
+    struct Resources {
+        int crystals = 0, usedCrystals = 0, quota = 26;
+        int ore = 0, studs = 0;
+    };
+    // elapsed: real time in game units (panels slide at the same speed regardless of game speed).
+    // The icon menu panel is drawn between these two calls.
+    void DrawPanels(Renderer2D& r, float elapsed);
+    void DrawSideBar(Renderer2D& r, const Font* font, const Resources& res, float elapsed);
+
+private:
+    struct Button {
+        PanelButton type = PanelButton::Count;
+        std::unique_ptr<Image> normal, highlight, pressed;
+        RectF rect;  // relative to the panel
+        std::string toolTip;
+    };
+    struct Panel {
+        std::unique_ptr<Image> image;
+        float openX = 0, openY = 0, closedX = 0, closedY = 0;
+        float x = 0, y = 0;  // current (sliding) position
+        bool open = false;
+        std::vector<Button> buttons;
+    };
+    void DrawPanel(Renderer2D& r, PanelType p, float elapsed);
+    void AnchorFor(Renderer2D& r, PanelType t) const;
+    bool OverImage(const Panel& p, float mx, float my) const;
+
+    std::array<Panel, size_t(PanelType::Count)> panels_;
+    std::unique_ptr<Image> smallCrystal_, usedCrystal_, noSmallCrystal_, oreMeter_;
+    float oreMeterX_ = 615, oreMeterY_ = 434, oreMeterLength_ = 423;
+    float oreMeterFill_ = 0.0f;  // 0..1
+    int oreMeterCount_ = 0;      // ore units the fill reflects
+    int hoverPanel_ = -1, hoverButton_ = -1;
+    bool pressed_ = false;
+    std::string hoverToolTip_;
+    std::array<int, 3> crystalHistory_{}, usedHistory_{};
+};
+
+}  // namespace rr

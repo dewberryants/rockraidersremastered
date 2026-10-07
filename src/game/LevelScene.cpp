@@ -70,6 +70,9 @@ public:
                 debugDigs_.push_back({std::atoi(std::string(xy[0]).c_str()), std::atoi(std::string(xy[1]).c_str())});
             }
         }
+        game.panels->Reset();
+        crystalQuota_ = cfg.GetInt(Config::Id(game.gameName, levelId_, "Reward", "Quota", "Crystals")).value_or(0);
+        game.panels->onButton = [this](PanelButton b) { OnPanelButton(b); };
         IconPanel& panel = *game.iconPanel;
         panel.BackToMain();
         panel.isEnabled = [this](MenuItem item) { return ItemEnabled(item); };
@@ -147,7 +150,9 @@ public:
     // selected; with units selected, clicking open floor sends them there.
     void HandleWorldClick(Input& in) {
         IconPanel& panel = *GetGame().iconPanel;
-        if (panel.HandleInput(in)) return;  // the panel takes clicks over it
+        // HUD panels and the icon menu take clicks over them (Panel_CheckCollision first).
+        if (GetGame().panels->HandleInput(in)) return;
+        if (panel.HandleInput(in)) return;
         if (!in.leftReleased() && !in.rightReleased()) return;
         if (in.rightReleased()) {
             // TODO(interface): right-click handling of the original (menus, cancel).
@@ -268,6 +273,16 @@ public:
             }
         }
         tasks_.TaskFinished(unit, success);
+    }
+
+    void OnPanelButton(PanelButton b) {
+        switch (b) {
+        case PanelButton::RadarToggle: GetGame().panels->Toggle(PanelType::Radar); break;
+        // TODO(camera): the game's zoom steps for the camera control buttons.
+        case PanelButton::CameraControlZoomIn: camera_.zoom = std::max(camera_.minZoom, camera_.zoom - 10.0f); break;
+        case PanelButton::CameraControlZoomOut: camera_.zoom = std::min(camera_.maxZoom, camera_.zoom + 10.0f); break;
+        default: RR_DEBUG("Panel button %d not implemented", int(b)); break;
+        }
     }
 
     static MenuType UnitMenu(const GameObject& o) {
@@ -463,13 +478,26 @@ public:
         const Mat4 viewProj = proj * viewMat;
         for (size_t i = 0; i < selection_.units().size(); ++i)
             DrawSelectionBox(r2d, viewProj, *selection_.units()[i], i == 0 ? ColorF{0, 1, 0, 1} : ColorF{1, 1, 0, 1});
-        if (const Font* f = GetGame().textFont.get()) f->Draw(r2d, 8, 8, ls.fullName);
+        // Panels slide in real time (Panel_Draw gets the unscaled frame time).
+        const uint64_t nowMs = SDL_GetTicks64();
+        const float frameElapsed = lastFrameMs_ ? float(nowMs - lastFrameMs_) * 0.025f : 0.0f;
+        lastFrameMs_ = nowMs;
+        Game& game = GetGame();
+        game.panels->DrawPanels(r2d, frameElapsed);
         r2d.SetAnchor(Anchor::Right);
-        GetGame().iconPanel->Draw(r2d);
+        game.iconPanel->Draw(r2d);
         r2d.SetAnchor(Anchor::Center);
+        Panels::Resources res;
+        res.crystals = crystals_;
+        res.usedCrystals = 0;  // TODO(power): crystals in use by powered buildings
+        res.quota = crystalQuota_;
+        res.ore = ore_;
+        game.panels->DrawSideBar(r2d, game.toolTipFont.get(), res, frameElapsed);
         // TODO(interface): proper tooltip boxes (ToolTip_*); plain text for now.
-        if (const Font* f = GetGame().toolTipFont.get(); f && !GetGame().iconPanel->hoverToolTip().empty())
-            f->Draw(r2d, GetApp().input().mouseX() + 16, GetApp().input().mouseY() + 16, GetGame().iconPanel->hoverToolTip());
+        std::string tip = game.panels->hoverToolTip();
+        if (tip.empty()) tip = game.iconPanel->hoverToolTip();
+        if (const Font* f = game.toolTipFont.get(); f && !tip.empty())
+            f->Draw(r2d, GetApp().input().mouseX() + 16, GetApp().input().mouseY() + 16, tip);
         GetPointers().Draw(r2d, GetApp().input().mouseX(), GetApp().input().mouseY());
     }
 
@@ -485,7 +513,8 @@ private:
     Selection selection_;
     TaskSystem tasks_;
     std::vector<BlockPos> debugDigs_;
-    int crystals_ = 0, ore_ = 0;
+    int crystals_ = 0, ore_ = 0, crystalQuota_ = 0;
+    uint64_t lastFrameMs_ = 0;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
     float viewAspect_ = 4.0f / 3.0f, uiWidth_ = 640.0f;

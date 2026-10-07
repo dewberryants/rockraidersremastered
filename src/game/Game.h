@@ -6,6 +6,7 @@
 #include "config/Config.h"
 #include "gfx/Font.h"
 #include "game/ui/Interface.h"
+#include "game/ui/Panels.h"
 
 namespace rr {
 
@@ -28,6 +29,7 @@ struct Game {
 
     std::unique_ptr<front::FrontEnd> frontEnd;
     std::unique_ptr<IconPanel> iconPanel;  // in-game icon menus (Interface_Initialise(565, 18))
+    std::unique_ptr<Panels> panels;        // HUD panels (Lego_LoadPanels, Lego_LoadPanelButtons)
 
     bool introsDone = false;
     std::string selectedLevel;  // "Levels::Tutorial01" when a level was chosen
