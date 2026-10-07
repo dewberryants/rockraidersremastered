@@ -199,6 +199,14 @@ void ObjectList::Update(float elapsed) {
         if (o.removed) continue;
         o.UpdateActivityChange();
         o.MoveAnimation(elapsed, CalculateSpeeds(o, elapsed).anim);
+        if (o.teleportingIn) {
+            // Arrived once the beam-in animation has played through.
+            if (o.animOverrun > 0.0f) {
+                o.teleportingIn = false;
+                o.SetActivity(ActivityType::Stand);
+            }
+            continue;
+        }
         if (o.routing) {
             UpdateMovement(o, elapsed);
             // TODO(activities): rubble-route and panic variants.
@@ -259,8 +267,10 @@ void ObjectList::Remove(GameObject& o) {
     if (o.carrier) o.carrier->carried = nullptr;
     if (o.carried) o.carried->carrier = nullptr;
     o.carrier = o.carried = nullptr;
-    for (auto& op : objects_)
+    for (auto& op : objects_) {
         if (op->stateTarget == &o) op->stateTarget = nullptr;
+        if (op->teleportService == &o) op->teleportService = nullptr;
+    }
 }
 
 void ObjectList::UpdateAction(GameObject& o, float elapsed) {

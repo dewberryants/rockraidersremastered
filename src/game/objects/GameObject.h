@@ -71,6 +71,8 @@ struct GameObject {
     bool singleWidthDig = false;
     GameObject* carried = nullptr;  // object this unit carries
     GameObject* carrier = nullptr;  // unit carrying this object
+    bool teleportingIn = false;            // playing Activity_TeleportIn after arriving
+    GameObject* teleportService = nullptr; // teleport building: the unit it is bringing in
 
     float health = 100.0f;
     float energy = 100.0f;

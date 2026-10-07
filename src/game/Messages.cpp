@@ -89,7 +89,7 @@ void MessageQueue::Clear() {
 
 bool Selection::IsSelectable(const GameObject& o) {
     // TODO(objects): also not while teleporting, frozen, being carried or driven off-map.
-    return (o.flags3 & ObjFlag3::Selectable) && !o.removed && !o.hidden;
+    return (o.flags3 & ObjFlag3::Selectable) && !o.removed && !o.hidden && !o.teleportingIn;
 }
 
 bool Selection::Select(GameObject& o) {

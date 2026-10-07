@@ -223,7 +223,7 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
     for (const auto& op : objects.objects()) {
         GameObject& u = *op;
         if (u.removed || u.hidden || u.type != ObjType::MiniFigure) continue;
-        if (u.routing || u.state != UnitState::Idle || TaskOf(u)) continue;
+        if (u.routing || u.state != UnitState::Idle || u.teleportingIn || TaskOf(u)) continue;
         if (u.flags3 & ObjFlag3::Selected) continue;  // TODO(ai): tasks given to selected units
         if (u.carried) {
             // Deliver what it carries to the nearest store (AITask_DoDeposit).

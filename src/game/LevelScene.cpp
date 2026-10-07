@@ -243,6 +243,15 @@ public:
             return blk.terrain != world::Terrain::Immovable && !(blk.flags & world::BlockFlag::Ground);
         case MenuItem::ClearRubble: return (blk.flags & world::BlockFlag::Ground) && !(blk.flags & world::BlockFlag::CleanFloor);
         case MenuItem::DeselectDig: return (blk.flags & world::BlockFlag::DigRequested) != 0;
+        case MenuItem::TeleportMan: {
+            // A building that can beam Rock Raiders in, and room in the queue.
+            if (teleportQueue_.size() >= kMaxTeleportQueue) return false;
+            for (const auto& o : objects_.objects())
+                if (o->type == ObjType::Building && !o->removed && !o->hidden && o->stats &&
+                    (o->stats->F1(o->level) & StatsFlag1::ManTeleporter))
+                    return true;
+            return false;
+        }
         default: return false;  // TODO(interface): the remaining items as their systems arrive
         }
     }
@@ -258,6 +267,11 @@ public:
             if (t) level_.block(b.x, b.y).flags |= world::BlockFlag::DigRequested;
             break;
         case MenuItem::ClearRubble: t = tasks_.CreateClear(b); break;
+        case MenuItem::TeleportMan:
+            // Lego_TryTeleportObject: Rock Raiders wait for a teleporter (LegoObject_QueueTeleport).
+            if (const ObjectTypeInfo* pilot = GetObjectRegistry().Get(ObjType::MiniFigure, 0))
+                if (teleportQueue_.size() < kMaxTeleportQueue) teleportQueue_.push_back(pilot);
+            break;
         case MenuItem::DeselectDig:
             level_.block(b.x, b.y).flags &= ~world::BlockFlag::DigRequested;
             // TODO(ai): AITask_RemoveWallReferences for the block's dig task.
@@ -381,6 +395,47 @@ public:
             }
         }
         return 0;
+    }
+
+    // LegoObject_UpdateTeleporter: each free teleport building brings in the first queued unit
+    // that uses its kind of teleporter and whose crystal cost is covered.
+    void ServiceTeleporters() {
+        if (teleportQueue_.empty()) return;
+        for (const auto& bp : objects_.objects()) {
+            GameObject& b = *bp;
+            if (b.type != ObjType::Building || b.removed || b.hidden || !b.stats) continue;
+            if (b.teleportService && b.teleportService->teleportingIn) continue;
+            const uint32_t bf1 = b.stats->F1(b.level);
+            for (size_t i = 0; i < teleportQueue_.size(); ++i) {
+                const ObjectTypeInfo& info = *teleportQueue_[i];
+                const ObjectStats* us = GetStats().Find(info.name);
+                const uint32_t uf2 = us ? us->F2(0) : 0;
+                const bool fits = ((uf2 & StatsFlag2::UseSmallTeleporter) && (bf1 & StatsFlag1::SmallTeleporter)) ||
+                                  ((uf2 & StatsFlag2::UseBigTeleporter) && (bf1 & StatsFlag1::BigTeleporter)) ||
+                                  ((uf2 & StatsFlag2::UseWaterTeleporter) && (bf1 & StatsFlag1::WaterTeleporter)) ||
+                                  ((uf2 & StatsFlag2::UseLegoManTeleporter) && (bf1 & StatsFlag1::ManTeleporter));
+                const int cost = us ? int(us->Num("CostCrystal", 0)) : 0;
+                if (!fits || cost > crystals_) continue;
+                // TODO(oxygen): only if the air supply supports another unit.
+                // Arrives at the building's deposit point; TODO(models): use the real null, this
+                // is the block in front (the building's path tile direction).
+                const int dir = int(std::lround(b.heading / (kPi * 0.5f))) & 3;
+                static const int kFrontX[4] = {0, 1, 0, -1}, kFrontY[4] = {-1, 0, 1, 0};
+                BlockPos origin;
+                if (!level_.map().WorldToBlock(b.position.x, b.position.y, origin.x, origin.y)) continue;
+                const Vec2 at = level_.map().BlockCentre(origin.x + kFrontX[dir], origin.y + kFrontY[dir]);
+                GameObject* u = objects_.Spawn(info, at.x, at.y, b.heading);
+                crystals_ -= cost;
+                u->teleportingIn = true;
+                u->SetActivity(ActivityType::TeleportIn, 1);
+                u->UpdateActivityChange();
+                b.teleportService = u;
+                teleportQueue_.erase(teleportQueue_.begin() + std::ptrdiff_t(i));
+                RR_INFO("Teleported in %s at %s", info.name.c_str(), b.info->name.c_str());
+                break;
+            }
+            if (teleportQueue_.empty()) return;
+        }
     }
 
     static MenuType UnitMenu(const GameObject& o) {
@@ -513,6 +568,7 @@ public:
                 ++i;
             }
         }
+        ServiceTeleporters();
         tasks_.Update(objects_, level_, elapsed);
         for (const auto& [bx, by] : level_.TakeExposedBlocks())
             for (GameObject* o : objects_.ExposeBlock(bx, by)) {
@@ -648,6 +704,8 @@ private:
     TaskSystem tasks_;
     std::vector<BlockPos> debugDigs_;
     int crystals_ = 0, ore_ = 0, crystalQuota_ = 0;
+    static constexpr size_t kMaxTeleportQueue = 9;
+    std::vector<const ObjectTypeInfo*> teleportQueue_;
     int crystalsPickedUp_ = 0, orePickedUp_ = 0, hiddenObjectsFound_ = 0;
     nerps::Runtime script_;
     std::string message_;
