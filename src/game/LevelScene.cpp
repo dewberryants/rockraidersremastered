@@ -316,8 +316,11 @@ public:
         const auto type = open > 1 ? RockFallEffects::OutsideCorner : RockFallEffects::ThreeSides;
         // As in the original, a fall that finds no free instance never completes (the block's
         // crystals and ore are not released).
-        if (GetGame().rockFalls.Spawn(type, b, pos, kDir[direction & 3]))
-            level_.block(b.x, b.y).flags |= world::BlockFlag::RockFallFX;
+        const bool spawned = GetGame().rockFalls.Spawn(type, b, pos, kDir[direction & 3]);
+        if (spawned) level_.block(b.x, b.y).flags |= world::BlockFlag::RockFallFX;
+        RR_INFO("Rock fall at %d,%d: %s, direction %d, %d open sides%s", b.x, b.y,
+                type == RockFallEffects::OutsideCorner ? "outside corner" : "three sides", direction & 3, open,
+                spawned ? "" : " (no free instance)");
     }
 
     // Level_GenerateCrystal / Level_GenerateOre: a resource at a random spot inside the block,

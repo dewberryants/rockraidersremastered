@@ -77,10 +77,13 @@ private:
         float openX = 0, openY = 0, closedX = 0, closedY = 0;
         float x = 0, y = 0;  // current (sliding) position
         bool open = false;
+        // Drawn on screen (only those take the mouse), and where: x + anchorX is the screen x.
+        bool shown = false;
+        float anchorX = 0;
         std::vector<Button> buttons;
     };
     void DrawPanel(Renderer2D& r, PanelType p, float elapsed);
-    void AnchorFor(Renderer2D& r, PanelType t) const;
+    void AnchorFor(Renderer2D& r, PanelType t);
     bool OverImage(const Panel& p, float mx, float my) const;
 
     std::array<Panel, size_t(PanelType::Count)> panels_;

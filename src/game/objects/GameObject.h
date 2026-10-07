@@ -183,6 +183,9 @@ public:
     const std::vector<HiddenObject>& hiddenObjects() const { return hidden_; }
     // Creates the hidden objects standing on a block that has just opened up.
     std::vector<GameObject*> ExposeBlock(int bx, int by);
+    // World position and facing (the null's +Z in the ground plane) of a named null in the
+    // object's current animation (Container_SearchTree on the activity container).
+    bool NullPoint(const GameObject& o, const std::string& nullName, Vec3f& pos, Vec2& dir) const;
     // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
     void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 
@@ -191,7 +194,7 @@ private:
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);
     void UpdateAction(GameObject& o, float elapsed);
-    bool CarryPoint(const GameObject& carrier, Vec3f& pos, Vec2& dir) const;
+
     void BuildRouteCurve(GameObject& o, bool skipCornerNode);
 
     world::Level* level_ = nullptr;

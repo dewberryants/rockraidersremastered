@@ -66,6 +66,9 @@ constexpr uint8_t BuildPath = 101;  // ours: turn a laid path into a power path
 constexpr uint8_t GetTool = 102;    // ours: pick up a tool at a tool store
 }
 namespace RouteFlag {
+// The unit arrives moving along a fixed direction, given in the low two bits:
+// 0 = +Y, 1 = +X, 2 = -Y, 3 = -X (LegoObject_Route_UpdateMovement).
+constexpr uint8_t Face = 0x4, FaceDirMask = 0x3;
 constexpr uint8_t Last = 0x8;         // final node reached through a zero-length route
 constexpr uint8_t CutCorner = 0x10;   // direction changes with a corner step: skipped while moving
 }

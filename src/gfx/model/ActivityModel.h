@@ -24,7 +24,7 @@ struct Activity {
 struct ActivityModel {
     std::string folder;        // e.g. "Mini-Figures\Pilot"
     float scale = 1.0f;
-    std::string cameraNull, drillNull, carryNull;
+    std::string cameraNull, drillNull, carryNull, depositNull, toolNull;
     // Building footprint in blocks relative to the origin (always first); a point listed twice
     // in a row is the building's path tile.
     std::vector<std::pair<int, int>> shape;

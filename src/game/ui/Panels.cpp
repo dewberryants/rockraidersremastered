@@ -127,7 +127,7 @@ void Panels::Toggle(PanelType p) { panels_[size_t(p)].open = !panels_[size_t(p)]
 
 bool Panels::OverImage(const Panel& p, float mx, float my) const {
     if (!p.image) return false;
-    const int px = int(mx - std::round(p.x)), py = int(my - std::round(p.y));
+    const int px = int(mx - std::round(p.x) - p.anchorX), py = int(my - std::round(p.y));
     if (px < 0 || py < 0 || px >= p.image->width() || py >= p.image->height()) return false;
     // Only solid (non-black) pixels belong to the panel (Panel_TestPointInsideImage).
     const uint8_t* c = &p.image->bitmap().rgba[(size_t(py) * size_t(p.image->width()) + size_t(px)) * 4];
@@ -141,10 +141,12 @@ bool Panels::HandleInput(const Input& in) {
     bool over = false;
     for (int p = 0; p < int(PanelType::Count); ++p) {
         const Panel& panel = panels_[size_t(p)];
-        if (!panel.image) continue;
+        // Panels that are not drawn (messages, priorities, encyclopedia...) must not swallow clicks.
+        if (!panel.image || !panel.shown) continue;
         for (size_t b = 0; b < panel.buttons.size(); ++b) {
             const Button& btn = panel.buttons[b];
-            const RectF r{std::round(panel.x) + btn.rect.x, std::round(panel.y) + btn.rect.y, btn.rect.w, btn.rect.h};
+            const RectF r{std::round(panel.x) + panel.anchorX + btn.rect.x, std::round(panel.y) + btn.rect.y,
+                          btn.rect.w, btn.rect.h};
             if (r.w > 0 && r.Contains(mx, my)) {
                 hoverPanel_ = p;
                 hoverButton_ = int(b);
@@ -174,6 +176,7 @@ void Panels::DrawPanel(Renderer2D& r, PanelType type, float elapsed) {
         p.y = std::abs(p.y - ty) <= 1.0f ? ty : (k * p.y + ty) / (k + 1.0f);
     }
     const float x = std::round(p.x), y = std::round(p.y);
+    p.shown = true;
     p.image->Draw(r, x, y);
     for (size_t b = 0; b < p.buttons.size(); ++b) {
         const Button& btn = p.buttons[b];
@@ -183,10 +186,12 @@ void Panels::DrawPanel(Renderer2D& r, PanelType type, float elapsed) {
     }
 }
 
-void Panels::AnchorFor(Renderer2D& r, PanelType t) const {
+void Panels::AnchorFor(Renderer2D& r, PanelType t) {
     // Panels designed for the right half follow the right screen edge in widescreen layouts.
-    const Panel& p = panels_[size_t(t)];
-    r.SetAnchor(std::max(p.openX, p.closedX) >= 320.0f ? Anchor::Right : Anchor::Left);
+    Panel& p = panels_[size_t(t)];
+    const Anchor a = std::max(p.openX, p.closedX) >= 320.0f ? Anchor::Right : Anchor::Left;
+    r.SetAnchor(a);
+    p.anchorX = r.AnchorOffset(a);
 }
 
 void Panels::DrawPanels(Renderer2D& r, float elapsed) {

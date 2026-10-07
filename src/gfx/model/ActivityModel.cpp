@@ -31,6 +31,8 @@ std::shared_ptr<ActivityModel> LoadActivityModel(const std::string& folder, cons
     model->cameraNull = ae.GetString("Lego*::CameraNullName", "");
     model->drillNull = ae.GetString("Lego*::DrillNullName", "");
     model->carryNull = ae.GetString("Lego*::CarryNullName", "");
+    model->depositNull = ae.GetString("Lego*::DepositNullName", "");
+    model->toolNull = ae.GetString("Lego*::ToolNullName", "");
     model->shape.emplace_back(0, 0);
     if (auto shape = ae.GetString("Lego*::Shape")) {
         for (std::string_view pt : SplitTokens(*shape, ":")) {

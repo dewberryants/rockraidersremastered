@@ -246,7 +246,8 @@ void ObjectList::Update(float elapsed) {
         if (!o.carrier) continue;
         const GameObject& c = *o.carrier;
         Vec2 dir;
-        if (CarryPoint(c, o.position, dir)) {
+        const ObjectModel* cm = c.info ? &c.info->model : nullptr;
+        if (cm && cm->activities && NullPoint(c, cm->activities->carryNull, o.position, dir)) {
             o.heading = std::atan2(dir.x, dir.y);
         } else {
             o.position = {c.position.x + c.faceDir.x * 4.0f, c.position.y + c.faceDir.y * 4.0f, c.position.z - 8.0f};
@@ -255,13 +256,13 @@ void ObjectList::Update(float elapsed) {
     }
 }
 
-bool ObjectList::CarryPoint(const GameObject& c, Vec3f& pos, Vec2& dir) const {
+bool ObjectList::NullPoint(const GameObject& c, const std::string& nullName, Vec3f& pos, Vec2& dir) const {
     const ObjectModel* m = c.info ? &c.info->model : nullptr;
-    if (!m || !m->activities || m->activities->carryNull.empty() || !c.anim || !c.anim->scene) return false;
+    if (!m || !m->activities || nullName.empty() || !c.anim || !c.anim->scene) return false;
     const LwsScene& scene = *c.anim->scene;
     size_t node = scene.nodes.size();
     for (size_t i = 0; i < scene.nodes.size(); ++i)
-        if (EqualsNoCase(scene.nodes[i].name, m->activities->carryNull)) {
+        if (EqualsNoCase(scene.nodes[i].name, nullName)) {
             node = i;
             break;
         }
@@ -271,7 +272,6 @@ bool ObjectList::CarryPoint(const GameObject& c, Vec3f& pos, Vec2& dir) const {
     if (node >= pose.world.size()) return false;
     const Mat4 w = ObjectMatrix(c.position, c.heading, m->activities->scale) * pose.world[node];
     pos = w.TransformPoint({0, 0, 0});
-    // The carried object is oriented along the null.
     const Vec3f fwd = w.TransformDir({0, 0, 1});
     dir = (fwd.x != 0.0f || fwd.y != 0.0f) ? Vec2{fwd.x, fwd.y} : c.faceDir;
     return true;
@@ -347,9 +347,7 @@ int StatSound(const GameObject& o, std::string_view key) {
     int id = 0;
     if (!o.stats) return -1;
     const std::string name = o.stats->Str(key, o.level);
-    const int r = !name.empty() && GetSfx().GetType(name, id) ? id : -1;
-    RR_INFO("TMPSND %.*s '%s' -> %d", int(key.size()), key.data(), name.c_str(), r);
-    return r;
+    return !name.empty() && GetSfx().GetType(name, id) ? id : -1;
 }
 }  // namespace
 
@@ -580,7 +578,10 @@ void ObjectList::BuildRouteCurve(GameObject& o, bool skipCornerNode) {
     const Vec2 pos{o.position.x, o.position.y};
 
     Vec2 endDir;
-    if ((node.flags & RouteFlag::Last) && (offset.x != 0.0f || offset.y != 0.0f)) {
+    if (node.flags & RouteFlag::Face) {
+        static const Vec2 kFace[4] = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};
+        endDir = kFace[node.flags & RouteFlag::FaceDirMask];
+    } else if ((node.flags & RouteFlag::Last) && (offset.x != 0.0f || offset.y != 0.0f)) {
         endDir = offset;
     } else {
         endDir = {target.x - fromCentre.x, target.y - fromCentre.y};
