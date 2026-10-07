@@ -74,6 +74,8 @@ struct GameObject {
     int deliverZone = 0;                   // construction site the carried resource is for
     ObjType fetchType = ObjType::None;     // resource to take from storage for deliverZone
     bool teleportingIn = false;            // playing Activity_TeleportIn after arriving
+    bool powered = false;                  // building: drawing power (or generating it)
+    bool powerOff = false;                 // building: switched off by the player
     GameObject* teleportService = nullptr; // teleport building: the unit it is bringing in
 
     float health = 100.0f;

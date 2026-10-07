@@ -10,6 +10,7 @@
 #include "game/Game.h"
 #include "game/Construction.h"
 #include "game/Messages.h"
+#include "game/PowerGrid.h"
 #include "core/Random.h"
 #include "game/ai/Tasks.h"
 #include "game/nerps/Nerps.h"
@@ -387,6 +388,7 @@ public:
 
     // Level script (NERPs): files from the level block, game functions answered here by name.
     void LoadScript(const Config& cfg) {
+        if (std::getenv("RR_DEBUG_NOSCRIPT")) return;  // scripted tests that must not win or lose
         const std::string base = Config::Id(GetGame().gameName, levelId_);
         if (!script_.LoadScript(cfg.GetString(Config::Id(base, "NERPFile"), ""))) return;
         script_.LoadMessages(cfg.GetString(Config::Id(base, "NERPMessageFile"), ""));
@@ -416,7 +418,12 @@ public:
             if (name == "Get" + s + "Built") return CountObjects(type);
             if (name == "GetLevel1" + s + "Built") return CountObjects(type, 1);
             if (name == "GetLevel2" + s + "Built") return CountObjects(type, 2);
-            if (name == "GetPowered" + s + "Built") return 0;  // TODO(power)
+            if (name == "GetPowered" + s + "Built") {
+                int n = 0;
+                for (const auto& o : objects_.objects())
+                    n += !o->removed && !o->hidden && o->powered && o->info && EqualsNoCase(o->info->name, type);
+                return n;
+            }
         }
         if (name == "SetLevelCompleted" || name == "SetLevelFail") {
             levelStatus_ = name == "SetLevelCompleted" ? 1 : 2;
@@ -609,6 +616,7 @@ public:
                 for (int dx = -1; dx <= 1; ++dx) level_.UpdateSurface(b.x + dx, b.y + dy);
             tasks_.RemoveZone(z.handle);
             zones_.erase(zones_.begin() + std::ptrdiff_t(i));
+            power_.Request();
             RR_INFO("Power path built at %d,%d", b.x, b.y);
             return;
         }
@@ -637,6 +645,7 @@ public:
             }
             GameObject* b = objects_.Create(*z.type);
             objects_.PlaceBuilding(*b, z.origin, z.dir);
+            power_.Request();  // LegoObject_RequestPowerGridUpdate
             tasks_.RemoveZone(z.handle);
             // TODO(construction): the building teleports down (LegoObject_TeleportDownBuilding).
             RR_INFO("Construction of %s complete", z.type->name.c_str());
@@ -868,12 +877,25 @@ public:
                 ++i;
             }
         }
+        if (std::getenv("RR_DEBUG_UNITS") && (++debugTick_ % 500) == 0) {
+            for (const auto& o : objects_.objects()) {
+                if (o->type != ObjType::MiniFigure || o->removed) continue;
+                BlockPos b;
+                objects_.BlockOf(*o, b);
+                RR_INFO("unit %p at %d,%d state %d routing %d act %d anim %p t %.1f over %.1f carried %p zone %d task %p",
+                        static_cast<void*>(o.get()), b.x, b.y, int(o->state), int(o->routing), int(o->activity),
+                        static_cast<const void*>(o->anim), o->animTime, o->animOverrun,
+                        static_cast<void*>(o->carried), o->deliverZone, static_cast<void*>(tasks_.TaskOf(*o)));
+            }
+        }
         ServiceTeleporters();
         UpdateConstruction();
+        power_.Update(level_, objects_, crystals_);
         tasks_.Update(objects_, level_, elapsed);
         for (const auto& [bx, by] : level_.TakeExposedBlocks())
             for (GameObject* o : objects_.ExposeBlock(bx, by)) {
                 ++hiddenObjectsFound_;  // NERPsRuntime_IncHiddenObjectsFound
+                if (o->type == ObjType::Building) power_.Request();
                 if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore) tasks_.CreateCollect(*o);
             }
         if (int n = level_.TakeCavernsDiscovered()) RR_INFO("%d hidden cavern(s) discovered", n);
@@ -974,7 +996,7 @@ public:
         r2d.SetAnchor(Anchor::Center);
         Panels::Resources res;
         res.crystals = crystals_;
-        res.usedCrystals = 0;  // TODO(power): crystals in use by powered buildings
+        res.usedCrystals = power_.used();
         res.quota = crystalQuota_;
         res.ore = ore_;
         game.panels->DrawSideBar(r2d, game.toolTipFont.get(), res, frameElapsed);
@@ -1022,6 +1044,8 @@ private:
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
     ObjectiveWindow objective_;
     RadarMap radar_;
+    PowerGrid power_;
+    int debugTick_ = 0;
     uint64_t lastFrameMs_ = 0;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
