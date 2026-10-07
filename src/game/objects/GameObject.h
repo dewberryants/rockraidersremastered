@@ -184,8 +184,9 @@ public:
     // Creates the hidden objects standing on a block that has just opened up.
     std::vector<GameObject*> ExposeBlock(int bx, int by);
     // World position and facing (the null's +Z in the ground plane) of a named null in the
-    // object's current animation (Container_SearchTree on the activity container).
-    bool NullPoint(const GameObject& o, const std::string& nullName, Vec3f& pos, Vec2& dir) const;
+    // object's current animation (Container_SearchTree on the activity container); instance
+    // picks among nulls sharing the name (Building_FindNull's frameNo).
+    bool NullPoint(const GameObject& o, const std::string& nullName, Vec3f& pos, Vec2& dir, int instance = 0) const;
     // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
     void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 

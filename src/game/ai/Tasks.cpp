@@ -340,16 +340,18 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
             continue;
         }
         if (u.carried) {
-            // Deliver what it carries to the nearest store (AITask_DoDeposit). The unit walks to
-            // the building's deposit null and arrives facing into the building
-            // (LegoObject_TryDepositCarried).
+            // Deliver what it carries to the nearest store (AITask_DoDeposit,
+            // LegoObject_TryDepositCarried). Buildings that store objects are walked into, to their
+            // tool null (always instance 4); others are approached at their deposit null, facing
+            // into the building.
             GameObject* best = NearestStore(objects, u);
             BlockPos from, to;
             std::vector<BlockPos> route;
             Vec3f np;
             Vec2 nd;
-            bool atNull = best && best->info && best->info->model.activities &&
-                          objects.NullPoint(*best, best->info->model.activities->depositNull, np, nd) &&
+            const bool stores = best && best->stats && (best->stats->F1(best->level) & StatsFlag1::StoreObjects);
+            const ActivityModel* am = best && best->info ? best->info->model.activities.get() : nullptr;
+            bool atNull = am && objects.NullPoint(*best, stores ? am->toolNull : am->depositNull, np, nd, stores ? 4 : 0) &&
                           level.map().WorldToBlock(np.x, np.y, to.x, to.y);
             const Vec2 endPos{np.x, np.y};
             const bool haveFrom = best && objects.BlockOf(u, from);
@@ -360,7 +362,7 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
             if (haveFrom && (atNull || (objects.BlockOf(*best, to) && RouteBlocks(level, u, from, to, route))) &&
                 objects.RouteBegin(u, route, atNull ? &endPos : nullptr)) {
                 u.route.back().action = RouteAction::Deposit;
-                if (atNull) {
+                if (atNull && !stores) {
                     const uint8_t dir = std::fabs(nd.x) <= std::fabs(nd.y) ? (nd.y <= 0.0f ? 0 : 2)
                                                                             : (nd.x <= 0.0f ? 1 : 3);
                     u.route.back().flags |= RouteFlag::Face | dir;

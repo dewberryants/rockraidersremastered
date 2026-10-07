@@ -256,13 +256,14 @@ void ObjectList::Update(float elapsed) {
     }
 }
 
-bool ObjectList::NullPoint(const GameObject& c, const std::string& nullName, Vec3f& pos, Vec2& dir) const {
+bool ObjectList::NullPoint(const GameObject& c, const std::string& nullName, Vec3f& pos, Vec2& dir,
+                           int instance) const {
     const ObjectModel* m = c.info ? &c.info->model : nullptr;
     if (!m || !m->activities || nullName.empty() || !c.anim || !c.anim->scene) return false;
     const LwsScene& scene = *c.anim->scene;
     size_t node = scene.nodes.size();
     for (size_t i = 0; i < scene.nodes.size(); ++i)
-        if (EqualsNoCase(scene.nodes[i].name, nullName)) {
+        if (EqualsNoCase(scene.nodes[i].name, nullName) && instance-- == 0) {
             node = i;
             break;
         }
@@ -317,8 +318,12 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         o.SetActivity(ActivityType::Collect);
         break;
     case RouteAction::Deposit:
+        // Buildings that store objects (StoreObjects) are walked into and the load put down
+        // (route action 9, Activity_Place); others have it thrown in (action 7, Activity_Deposit).
         o.state = UnitState::Depositing;
-        o.SetActivity(ActivityType::Deposit);
+        o.SetActivity(target && target->stats && (target->stats->F1(target->level) & StatsFlag1::StoreObjects)
+                          ? ActivityType::Place
+                          : ActivityType::Deposit);
         break;
     case RouteAction::Fetch:
         o.state = UnitState::Fetching;
