@@ -21,12 +21,6 @@ const char* const kPriorityNames[int(PriorityType::Count)] = {
 
 constexpr float kRetryTime = 75.0f;  // game units before a task whose route failed is offered again
 
-bool Adjacent(BlockPos a, BlockPos b) {
-    return (a.x == b.x && std::abs(a.y - b.y) == 1) || (a.y == b.y && std::abs(a.x - b.x) == 1);
-}
-
-bool TaskNeedsAdjacentBlock(TaskType t) { return t == TaskType::Dig || t == TaskType::Reinforce; }
-
 // Block route that also covers standing in the target block already (a one-node route).
 bool RouteBlocks(const world::Level& level, const GameObject& unit, BlockPos from, BlockPos to,
                  std::vector<BlockPos>& out) {

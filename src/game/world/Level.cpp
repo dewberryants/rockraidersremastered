@@ -370,4 +370,21 @@ bool Level::ClearRubbleLayer(int x, int y) {
     return layers == 0;
 }
 
+void Level::SetBuildingBlock(int x, int y, BuildingBlock kind, bool generatesPower) {
+    if (!InBounds(x, y)) return;
+    Block& b = block(x, y);
+    switch (kind) {
+    case BuildingBlock::Solid:
+        b.flags |= BlockFlag::Building | BlockFlag::Foundation;
+        if (generatesPower) b.flags2 |= BlockFlag2::GeneratePower;
+        break;
+    case BuildingBlock::Path: b.flags |= BlockFlag::Path | BlockFlag::Foundation | BlockFlag::BuildingPath; break;
+    case BuildingBlock::ToolStore:
+        b.flags |= BlockFlag::Foundation | BlockFlag::BuildingPath;
+        b.flags2 |= BlockFlag2::ToolStoreEntrance;
+        break;
+    }
+    UpdateSurface(x, y);
+}
+
 }  // namespace rr::world

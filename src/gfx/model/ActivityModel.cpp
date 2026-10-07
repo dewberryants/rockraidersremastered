@@ -1,5 +1,7 @@
 #include "gfx/model/ActivityModel.h"
 
+#include <cstdlib>
+
 #include "config/Config.h"
 #include "core/Log.h"
 #include "fs/Path.h"
@@ -29,6 +31,14 @@ std::shared_ptr<ActivityModel> LoadActivityModel(const std::string& folder, cons
     model->cameraNull = ae.GetString("Lego*::CameraNullName", "");
     model->drillNull = ae.GetString("Lego*::DrillNullName", "");
     model->carryNull = ae.GetString("Lego*::CarryNullName", "");
+    model->shape.emplace_back(0, 0);
+    if (auto shape = ae.GetString("Lego*::Shape")) {
+        for (std::string_view pt : SplitTokens(*shape, ":")) {
+            const auto xy = SplitTokens(pt, ",");
+            if (xy.size() == 2)
+                model->shape.emplace_back(std::atoi(std::string(xy[0]).c_str()), std::atoi(std::string(xy[1]).c_str()));
+        }
+    }
 
     for (Config::ItemRef it = ae.FindArray("Lego*::Activities"); it != Config::kNone; it = ae.Next(it)) {
         std::string_view id = ae.item(it).key;

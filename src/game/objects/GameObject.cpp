@@ -545,16 +545,49 @@ void ObjectList::Clear() {
 GameObject* ObjectList::PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg) {
     GameObject* o = Create(info);
     if (info.type == ObjType::Building) {
-        // TODO(construction): Construction_SpawnBuilding (shape points, foundations, paths).
+        // Lego_LoadOLObjectList: the heading in eighths of a turn, rounded up to quarters.
+        const int eighths = int(headingDeg * (1.0f / 180.0f) * kPi * (1.0f / (2.0f * kPi)) * 8.0f);
+        const int dir = ((eighths & 1) + eighths) >> 1;
         BlockPos b;
         level_->map().WorldToBlock(x, y, b.x, b.y);
-        const Vec2 c = level_->map().BlockCentre(b.x, b.y);
-        const int dir = int(std::lround(headingDeg / 90.0f)) & 3;
-        SetPositionAndHeading(*o, c.x, c.y, float(dir) * kPi * 0.5f);
+        PlaceBuilding(*o, b, dir);
     } else {
         SetPositionAndHeading(*o, x, y, headingDeg * (1.0f / 180.0f) * kPi);
     }
     return o;
+}
+
+void ObjectList::PlaceBuilding(GameObject& o, BlockPos origin, int dir) {
+    // TODO(construction): flatten the ground under the footprint (Map3D_FlattenShapeVertices).
+    const Vec2 c = level_->map().BlockCentre(origin.x, origin.y);
+    SetPositionAndHeading(o, c.x, c.y, float(dir) * kPi * 0.5f);
+    if (!o.info || !o.info->model.activities) return;
+    // SelectPlace_TransformShapePoints: rotate by the direction, then move to the origin.
+    std::vector<BlockPos> blocks;
+    for (const auto& [sx, sy] : o.info->model.activities->shape) {
+        BlockPos p{sx, sy};
+        switch (dir & 3) {
+        case 1: p = {-sy, sx}; break;
+        case 2: p = {-sx, -sy}; break;
+        case 3: p = {sy, -sx}; break;
+        default: break;
+        }
+        blocks.push_back({p.x + origin.x, p.y + origin.y});
+    }
+    // Construction_Zone_CompleteBuilding: a repeated point is the path tile; the rest is the
+    // building (walkable for units allowed into tool stores, solid otherwise).
+    const bool toolStore = o.stats && (o.stats->F1(o.level) & StatsFlag1::ToolStore);
+    const bool power = o.stats && (o.stats->F2(o.level) & StatsFlag2::PowerBuilding);
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (i + 1 < blocks.size() && blocks[i] == blocks[i + 1]) {
+            level_->SetBuildingBlock(blocks[i].x, blocks[i].y, world::Level::BuildingBlock::Path, false);
+            ++i;
+            continue;
+        }
+        level_->SetBuildingBlock(blocks[i].x, blocks[i].y,
+                                 toolStore ? world::Level::BuildingBlock::ToolStore : world::Level::BuildingBlock::Solid,
+                                 power);
+    }
 }
 
 std::vector<GameObject*> ObjectList::ExposeBlock(int bx, int by) {

@@ -23,12 +23,13 @@ constexpr uint32_t Visible = 0x4;           // surface is floor/wall/corner (not
 constexpr uint32_t Ground = 0x8;            // all corners dug: walkable floor
 constexpr uint32_t Wall = 0x10;             // wall shape (or wall facing newly opened ground)
 constexpr uint32_t Reinforced = 0x20;
-constexpr uint32_t Building = 0x400;        // occupied by a building path tile (joins power paths)
+constexpr uint32_t Building = 0x400;        // solid part of a building: units route around it
 constexpr uint32_t OuterCorner = 0x40;
 constexpr uint32_t InnerCorner = 0x80;
 constexpr uint32_t LavaSettled = 0x200;     // erosion finished: cooled lava texture
 constexpr uint32_t Diagonal = 0x2000;       // two opposite corners dug ("V" wall)
 constexpr uint32_t HiddenCavern = 0x20000;  // predug cavern not yet discovered
+constexpr uint32_t BuildingPath = 0x8000;   // walkable part of a building (path tile, tool store)
 constexpr uint32_t Foundation = 0x100000;   // building foundation floor
 constexpr uint32_t CleanFloor = 0x200000;   // floor without rubble (predug caverns)
 constexpr uint32_t Path = 0x20000000;       // built power path
@@ -39,6 +40,7 @@ constexpr uint32_t Eroding = 0x80000000;    // lava erosion has reached this blo
 
 // Second flag word.
 namespace BlockFlag2 {
+constexpr uint32_t GeneratePower = 0x1;      // a power station stands here
 constexpr uint32_t ToolStoreEntrance = 0x4;  // only units with EnterToolStore may route through
 constexpr uint32_t SlugHole = 0x20;
 constexpr uint32_t Powered = 0x100;
@@ -94,6 +96,10 @@ public:
     void UpdateSurface(int x, int y);
     // Level_DestroyWall: lowers the block's corner points and updates the surroundings.
     bool DestroyWall(int x, int y, bool hiddenCavern);
+    // Building footprint blocks (Level_Block_SetSolidBuilding / SetPathBuilding / SetToolStoreBuilding).
+    enum class BuildingBlock { Solid, Path, ToolStore };
+    void SetBuildingBlock(int x, int y, BuildingBlock kind, bool generatesPower);
+
     // Removes one rubble layer; returns true once the floor is clean (Level_Block_ClearRubbleLayer).
     bool ClearRubbleLayer(int x, int y);
     // Opens a hidden cavern from block (x, y): a wave over the 8 neighbours reaches every

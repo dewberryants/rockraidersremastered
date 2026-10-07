@@ -160,6 +160,8 @@ public:
 
 private:
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
+    // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
+    void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
     void UpdateMovement(GameObject& o, float elapsed);
     void UpdateAction(GameObject& o, float elapsed);
     void BuildRouteCurve(GameObject& o, bool skipCornerNode);

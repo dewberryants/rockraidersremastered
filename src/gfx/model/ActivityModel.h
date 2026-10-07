@@ -25,6 +25,9 @@ struct ActivityModel {
     std::string folder;        // e.g. "Mini-Figures\Pilot"
     float scale = 1.0f;
     std::string cameraNull, drillNull, carryNull;
+    // Building footprint in blocks relative to the origin (always first); a point listed twice
+    // in a row is the building's path tile.
+    std::vector<std::pair<int, int>> shape;
     std::unordered_map<std::string, std::shared_ptr<Activity>> activities;  // lower-case "activity_stand"
 
     const Activity* Find(std::string_view activityId) const;
