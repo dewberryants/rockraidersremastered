@@ -37,6 +37,22 @@ bool IsStorageBuilding(const GameObject& o) {
     return (f1 & StatsFlag1::ToolStore) || (f1 & StatsFlag1::StoreObjects);
 }
 
+GameObject* NearestToolStore(const ObjectList& objects, const GameObject& u) {
+    GameObject* best = nullptr;
+    float bestD = 0.0f;
+    for (const auto& bp : objects.objects()) {
+        const GameObject& b = *bp;
+        if (b.type != ObjType::Building || b.removed || b.hidden || !b.stats) continue;
+        if (!(b.stats->F1(b.level) & StatsFlag1::ToolStore)) continue;
+        const float dx = b.position.x - u.position.x, dy = b.position.y - u.position.y;
+        if (!best || dx * dx + dy * dy < bestD) {
+            best = bp.get();
+            bestD = dx * dx + dy * dy;
+        }
+    }
+    return best;
+}
+
 GameObject* NearestStore(const ObjectList& objects, const GameObject& u) {
     GameObject* best = nullptr;
     float bestD = 0.0f;
@@ -152,6 +168,13 @@ Task* TaskSystem::CreateRequest(int zone, ObjType resource) {
     return t;
 }
 
+Task* TaskSystem::CreateGetTool(ToolType tool, GameObject* forUnit) {
+    Task* t = NewTask(tasks_, TaskType::GetTool, PriorityType::DefaultCollect, 99);
+    t->tool = tool;
+    t->forUnit = forUnit;
+    return t;
+}
+
 Task* TaskSystem::CreateBuildPath(BlockPos block) {
     Task* t = NewTask(tasks_, TaskType::BuildPath, PriorityType::BuildPath, priorityValue_[size_t(PriorityType::BuildPath)]);
     t->block = block;
@@ -176,10 +199,17 @@ Vec2 TaskSystem::TaskPosition(const Task& t, const world::Level& level) const {
 
 bool TaskSystem::CanDo(const Task& t, const GameObject& unit, const world::Level& level) const {
     if (t.retryTimer > 0.0f || t.remove || t.assigned) return false;
-    if (priorityOff_[size_t(t.priorityType)]) return false;
-    // TODO(ai): vehicles and rock monsters take tasks too; tools and trained skills.
+    if (t.forUnit && t.forUnit != &unit) return false;
+    if (priorityOff_[size_t(t.priorityType)] && t.type != TaskType::GetTool) return false;
+    // TODO(ai): vehicles and rock monsters take tasks too; trained skills.
     if (unit.type != ObjType::MiniFigure || !unit.stats) return false;
     if (unit.carried) return false;
+    // LegoObject_TaskHasTool: minifigures need the task's tool on their belt.
+    if (const ToolType need = ToolFor(t.type); need != ToolType::Count && !unit.HasTool(need)) return false;
+    return CanDoIgnoringTools(t, unit, level);
+}
+
+bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const world::Level& level) const {
     switch (t.type) {
     case TaskType::Dig: {
         const world::Block& b = level.block(t.block.x, t.block.y);
@@ -200,6 +230,7 @@ bool TaskSystem::CanDo(const Task& t, const GameObject& unit, const world::Level
     case TaskType::Collect: return t.target && !t.target->removed && !t.target->carrier && !t.target->hidden;
     case TaskType::Request: return !hasStock || hasStock(t.resource);
     case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
+    case TaskType::GetTool: return t.tool != ToolType::Count && !unit.HasTool(t.tool);
     default: return false;
     }
 }
@@ -245,6 +276,17 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         if (!RouteBlocks(level, unit, from, t.block, route) || !objects.RouteBegin(unit, route)) return false;
         unit.route.back().action = RouteAction::BuildPath;
         break;
+    case TaskType::GetTool: {
+        // LegoObject_DoGetTool: walk into the nearest tool store.
+        // TODO(models): the store's tool null for each tool instead of the store block.
+        GameObject* store = NearestToolStore(objects, unit);
+        BlockPos sb;
+        if (!store || !objects.BlockOf(*store, sb)) return false;
+        if (!RouteBlocks(level, unit, from, sb, route) || !objects.RouteBegin(unit, route)) return false;
+        unit.route.back().action = RouteAction::GetTool;
+        unit.wantedTool = t.tool;
+        break;
+    }
     case TaskType::Request: {
         // Off to the nearest storage building to take the resource out.
         GameObject* store = NearestStore(objects, unit);
@@ -329,7 +371,19 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
                 bestD = d;
             }
         }
-        if (bestIdx == idle.size()) continue;
+        if (bestIdx == idle.size()) {
+            // Nobody has the tool: AITask_DoGetTool_FromTask sends a unit for it.
+            const ToolType need = ToolFor(t->type);
+            if (need != ToolType::Count && !t->toolRequested) {
+                for (GameObject* u : idle) {
+                    if (!CanDoIgnoringTools(*t, *u, level) || HasGetToolTask(need)) continue;
+                    CreateGetTool(need);
+                    t->toolRequested = true;
+                    break;
+                }
+            }
+            continue;
+        }
         GameObject& unit = *idle[bestIdx];
         if (!Start(*t, unit, objects, level)) {
             RR_DEBUG("Task %d could not start for %s", int(t->type), unit.info->name.c_str());
@@ -340,6 +394,23 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
         idle[bestIdx] = idle.back();
         idle.pop_back();
     }
+}
+
+ToolType TaskSystem::ToolFor(TaskType t) {
+    // Stats_AddToolTaskType: the only tasks that need a tool.
+    switch (t) {
+    case TaskType::Dig: return ToolType::Drill;
+    case TaskType::Clear: return ToolType::Spade;
+    case TaskType::Reinforce: return ToolType::Hammer;
+    case TaskType::Repair: return ToolType::Spanner;
+    default: return ToolType::Count;
+    }
+}
+
+bool TaskSystem::HasGetToolTask(ToolType tool) const {
+    for (const auto& t : tasks_)
+        if (t->type == TaskType::GetTool && t->tool == tool && !t->remove && !t->forUnit) return true;
+    return false;
 }
 
 void TaskSystem::TaskFinished(GameObject& unit, bool success) {

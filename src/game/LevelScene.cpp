@@ -299,6 +299,14 @@ public:
         case MenuItem::BuildBuilding:
         case MenuItem::BuildSmallVehicle:
         case MenuItem::BuildLargeVehicle: return true;
+        case MenuItem::GetTool: return selection_.Primary() && selection_.Primary()->type == ObjType::MiniFigure;
+        case MenuItem::GetDrill:
+        case MenuItem::GetSpade:
+        case MenuItem::GetHammer:
+        case MenuItem::GetSpanner: {
+            const GameObject* u = selection_.Primary();
+            return u && u->type == ObjType::MiniFigure && !u->HasTool(ToolOfItem(item));
+        }
         case MenuItem::LayPath: {
             // Clean free floor without a path, laid path or site already.
             // TODO(interface): Interface item checks (dependencies for Path, rubble rules).
@@ -333,6 +341,16 @@ public:
             break;
         case MenuItem::ClearRubble: t = tasks_.CreateClear(b); break;
         case MenuItem::LayPath: StartPath(b); break;
+        case MenuItem::GetTool: panel.OpenMenu(MenuType::GetTool); return;
+        case MenuItem::GetDrill:
+        case MenuItem::GetSpade:
+        case MenuItem::GetHammer:
+        case MenuItem::GetSpanner:
+            if (GameObject* u = selection_.Primary()) {
+                Task* gt = tasks_.CreateGetTool(ToolOfItem(item), u);
+                tasks_.AssignTo(*gt, *u, objects_, level_);
+            }
+            break;
         // Interface_DoAction: the build icons open their lists.
         case MenuItem::BuildBuilding: panel.OpenMenu(MenuType::BuildBuilding); return;
         case MenuItem::BuildSmallVehicle: panel.OpenMenu(MenuType::BuildSmallVehicle); return;
@@ -747,6 +765,16 @@ public:
         }
     }
 
+    static ToolType ToolOfItem(MenuItem item) {
+        switch (item) {
+        case MenuItem::GetDrill: return ToolType::Drill;
+        case MenuItem::GetSpade: return ToolType::Spade;
+        case MenuItem::GetHammer: return ToolType::Hammer;
+        case MenuItem::GetSpanner: return ToolType::Spanner;
+        default: return ToolType::Count;
+        }
+    }
+
     static MenuType UnitMenu(const GameObject& o) {
         switch (o.type) {
         case ObjType::MiniFigure: return MenuType::LegoMan;
@@ -882,10 +910,13 @@ public:
                 if (o->type != ObjType::MiniFigure || o->removed) continue;
                 BlockPos b;
                 objects_.BlockOf(*o, b);
-                RR_INFO("unit %p at %d,%d state %d routing %d act %d anim %p t %.1f over %.1f carried %p zone %d task %p",
+                const Task* tk = tasks_.TaskOf(*o);
+                std::string tools;
+                for (ToolType t : o->tools) tools += std::to_string(int(t));
+                RR_INFO("unit %p at %d,%d state %d routing %d act %d over %.1f carried %p zone %d task %d tools %s",
                         static_cast<void*>(o.get()), b.x, b.y, int(o->state), int(o->routing), int(o->activity),
-                        static_cast<const void*>(o->anim), o->animTime, o->animOverrun,
-                        static_cast<void*>(o->carried), o->deliverZone, static_cast<void*>(tasks_.TaskOf(*o)));
+                        o->animOverrun, static_cast<void*>(o->carried), o->deliverZone, tk ? int(tk->type) : -1,
+                        tools.c_str());
             }
         }
         ServiceTeleporters();

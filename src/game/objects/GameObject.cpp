@@ -1,5 +1,6 @@
 #include "game/objects/GameObject.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -57,6 +58,18 @@ bool GameObject::UpdateActivityChange() {
     animOverrun = 0.0f;
     activity = nextActivity;
     return found;
+}
+
+bool GameObject::HasTool(ToolType t) const {
+    return std::find(tools.begin(), tools.end(), t) != tools.end();
+}
+
+void GameObject::EquipTool(ToolType t) {
+    const int capacity = stats ? int(stats->Num("NumOfToolsCanCarry", level)) : 0;
+    if (capacity <= 0 || HasTool(t)) return;
+    // TODO(weapons): beam weapons replace the beam weapon already carried.
+    if (int(tools.size()) >= capacity) tools.erase(tools.begin());
+    tools.push_back(t);
 }
 
 void GameObject::Face(Vec2 dir) {
@@ -159,7 +172,7 @@ GameObject* ObjectList::Create(const ObjectTypeInfo& info) {
     // LegoObject_Create: per-type initial flags. Only the bits used so far are named.
     switch (o.type) {
     case ObjType::Vehicle: o.flags3 |= 0x441190; break;
-    case ObjType::MiniFigure: o.flags3 |= 0x4401f5 | 0x8000; break;
+    case ObjType::MiniFigure: o.flags3 |= 0x4401f5 | 0x8000; break;  // tools below
     case ObjType::RockMonster: o.flags3 |= 0x8440200 | 0x80000000u; break;
     case ObjType::Building: o.flags3 |= 0x40100; break;
     case ObjType::UpgradePart: o.flags3 |= 0x80000; break;
@@ -180,6 +193,7 @@ GameObject* ObjectList::Create(const ObjectTypeInfo& info) {
     o.SetActivity(ActivityType::Stand);
     o.UpdateActivityChange();
     if (o.stats && (o.stats->F2(o.level) & StatsFlag2::Unselectable)) o.flags3 &= ~ObjFlag3::Selectable;
+    if (o.type == ObjType::MiniFigure) o.EquipTool(ToolType::Drill);  // every Rock Raider starts with a drill
     // TODO(objects): tools, flocks, power grid, AI tasks for buildings/monsters, counts per type.
 
     objects_.push_back(std::move(obj));
@@ -258,6 +272,10 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
     case RouteAction::Place:
         o.state = UnitState::Placing;
         o.SetActivity(ActivityType::Place);
+        break;
+    case RouteAction::GetTool:
+        o.state = UnitState::GettingTool;
+        o.SetActivity(ActivityType::Collect);
         break;
     case RouteAction::BuildPath:
         // LegoObject_TryBuildPath: the path is swept into place with the clearing animation.
@@ -372,6 +390,13 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
             }
             o.deliverZone = 0;
             FinishAction(o, item != nullptr);
+        }
+        break;
+    case UnitState::GettingTool:
+        if (o.animOverrun > 0.0f) {
+            if (o.wantedTool != ToolType::Count) o.EquipTool(o.wantedTool);
+            o.wantedTool = ToolType::Count;
+            FinishAction(o, true);
         }
         break;
     case UnitState::BuildingPath:

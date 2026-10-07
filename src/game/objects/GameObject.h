@@ -30,7 +30,9 @@ constexpr uint32_t CanRouteRubble = 0x10000000;  // model has Activity_RouteRubb
 }  // namespace ObjFlag3
 
 // What a unit is busy doing after arriving somewhere.
-enum class UnitState : uint8_t { Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath };
+enum class UnitState : uint8_t {
+    Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool
+};
 
 // A live game object (LegoObject). Grows as the game systems are implemented.
 struct GameObject {
@@ -74,6 +76,8 @@ struct GameObject {
     int deliverZone = 0;                   // construction site the carried resource is for
     ObjType fetchType = ObjType::None;     // resource to take from storage for deliverZone
     bool teleportingIn = false;            // playing Activity_TeleportIn after arriving
+    std::vector<ToolType> tools;           // minifigure tool belt, oldest first
+    ToolType wantedTool = ToolType::Count; // tool to pick up at the tool store
     bool powered = false;                  // building: drawing power (or generating it)
     bool powerOff = false;                 // building: switched off by the player
     GameObject* teleportService = nullptr; // teleport building: the unit it is bringing in
@@ -96,6 +100,9 @@ struct GameObject {
     // animSpeed is the already scaled amount for the main part (ObjectSpeeds::anim).
     void MoveAnimation(float elapsed, float animSpeed);
     bool HasActivity(ActivityType a) const;
+    bool HasTool(ToolType t) const;
+    // LegoObject_MiniFigure_EquipTool: a full belt drops its oldest tool.
+    void EquipTool(ToolType t);
     // Faces a ground direction (heading 0 = +Y, increasing towards +X).
     void Face(Vec2 dir);
 };

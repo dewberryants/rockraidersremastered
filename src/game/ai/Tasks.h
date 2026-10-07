@@ -51,6 +51,9 @@ struct Task {
     // Request: bring a resource of this type from storage to construction site `zone`.
     ObjType resource = ObjType::None;
     int zone = 0;
+    ToolType tool = ToolType::Count;   // GetTool: the tool to fetch
+    bool toolRequested = false;        // a GetTool job has been raised for this task
+    GameObject* forUnit = nullptr;     // only this unit may take the task
 };
 
 // The pending task list and the per-unit task assignment (AITask_*).
@@ -67,6 +70,8 @@ public:
     Task* CreateRequest(int zone, ObjType resource);
     // AITask_DoBuildPath_AtPosition: lay the power path once its resources are on the block.
     Task* CreateBuildPath(BlockPos block);
+    // AITask_DoGetTool: a unit fetches a tool from a tool store (optionally a given unit).
+    Task* CreateGetTool(ToolType tool, GameObject* forUnit = nullptr);
     void RemoveZone(int zone);
 
     // Game hooks: stock left in storage, and where a construction site takes deliveries.
@@ -89,6 +94,9 @@ public:
 
 private:
     bool CanDo(const Task& t, const GameObject& unit, const world::Level& level) const;
+    bool CanDoIgnoringTools(const Task& t, const GameObject& unit, const world::Level& level) const;
+    bool HasGetToolTask(ToolType tool) const;
+    static ToolType ToolFor(TaskType t);
     bool Start(Task& t, GameObject& unit, ObjectList& objects, world::Level& level);
     Vec2 TaskPosition(const Task& t, const world::Level& level) const;
 
