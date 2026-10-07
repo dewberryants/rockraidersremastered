@@ -35,6 +35,7 @@ private:
         std::string text;
     };
     Page& PageFor(State s) { return s == State::Achieved ? achieved_ : s == State::Failed ? failed_ : briefing_; }
+    const Page& PanelFor(State s) const;
     void ShowPage();
     int PageCount() const;
     int page_ = 0;

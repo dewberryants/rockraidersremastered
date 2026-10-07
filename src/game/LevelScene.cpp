@@ -359,10 +359,18 @@ public:
             // The "permit" flag blocks messages while non-zero (scripts clear it to talk).
             if (script_.messagePermit != 0) return 0;
             if (const std::string* line = script_.MessageLine(args[0])) {
-                message_ = *line;
+                // "#name#" marks the speech sample that goes with the line; it is not shown.
+                // TODO(audio): play the marked sample (Text_SetNERPsMessage).
+                message_.clear();
+                bool inTag = false;
+                for (char c : *line) {
+                    if (c == '#') inTag = !inTag;
+                    else if (!inTag) message_ += c;
+                }
+                while (!message_.empty() && message_.back() == ' ') message_.pop_back();
                 // TODO(nerps): message timing comes from the speech sample / timer values.
-                script_.messageTimer = 3000.0f + 60.0f * float(line->size());
-                RR_INFO("Message: %s", message_.c_str());
+                script_.messageTimer = 3000.0f + 60.0f * float(message_.size());
+                RR_INFO("Message %d shown", args[0]);
             }
             return args[0];
         } else {

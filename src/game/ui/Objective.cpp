@@ -104,8 +104,9 @@ void ObjectiveWindow::Show(State s) {
 
 void ObjectiveWindow::ShowPage() {
     const Page& p = PageFor(state_);
+    const Page& panel = PanelFor(state_);
     // The text area inside the panel image (Objective_LoadObjectiveText): 60,60 390 x 180.
-    window_.SetArea({p.x + 60.0f, p.y + 60.0f, 390.0f, 180.0f});
+    window_.SetArea({panel.x + 60.0f, panel.y + 60.0f, 390.0f, 180.0f});
     window_.Clear();
     size_t start = 0;
     for (int i = 0; i < page_ && start != std::string::npos; ++i) {
@@ -141,9 +142,15 @@ ObjectiveWindow::State ObjectiveWindow::HandleInput(const Input& in) {
 
 void ObjectiveWindow::Draw(Renderer2D& r) {
     if (!showing()) return;
-    Page& p = PageFor(state_);
+    const Page& p = PanelFor(state_);
     if (p.image) p.image->Draw(r, p.x, p.y);
     window_.Draw(r);
+}
+
+const ObjectiveWindow::Page& ObjectiveWindow::PanelFor(State s) const {
+    // Levels only name the briefing image; the result pages are shown on the same panel.
+    const Page& p = s == State::Achieved ? achieved_ : s == State::Failed ? failed_ : briefing_;
+    return p.image ? p : briefing_;
 }
 
 }  // namespace rr
