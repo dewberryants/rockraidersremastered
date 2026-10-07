@@ -11,6 +11,8 @@
 #include "game/Messages.h"
 #include "core/Random.h"
 #include "game/ai/Tasks.h"
+#include "game/nerps/Nerps.h"
+#include "game/nerps/NerpsFunctions.h"
 #include "game/ui/Radar.h"
 #include "game/objects/ObjectRegistry.h"
 #include "game/Pointer.h"
@@ -54,8 +56,13 @@ public:
         objects_.onActionDone = [this](GameObject& u, bool ok) { OnActionDone(u, ok); };
         objects_.onDeposit = [this](GameObject&, GameObject& item, GameObject&) {
             // TODO(resources): refinery and building-specific storage, info messages.
-            if (item.type == ObjType::PowerCrystal) ++crystals_;
-            else if (item.type == ObjType::Ore) ++ore_;
+            if (item.type == ObjType::PowerCrystal) {
+                ++crystals_;
+                ++crystalsPickedUp_;
+            } else if (item.type == ObjType::Ore) {
+                ++ore_;
+                ++orePickedUp_;
+            }
             RR_INFO("Stored %s: crystals %d, ore %d", item.info->name.c_str(), crystals_, ore_);
         };
         // Lego_LoadOLObjectList: loose crystals, ore, dynamite and barriers are to be collected.
@@ -71,6 +78,7 @@ public:
                 debugDigs_.push_back({std::atoi(std::string(xy[0]).c_str()), std::atoi(std::string(xy[1]).c_str())});
             }
         }
+        LoadScript(cfg);
         game.panels->Reset();
         crystalQuota_ = cfg.GetInt(Config::Id(game.gameName, levelId_, "Reward", "Quota", "Crystals")).value_or(0);
         game.panels->onButton = [this](PanelButton b) { OnPanelButton(b); };
@@ -291,6 +299,80 @@ public:
         }
     }
 
+    // Level script (NERPs): files from the level block, game functions answered here by name.
+    void LoadScript(const Config& cfg) {
+        const std::string base = Config::Id(GetGame().gameName, levelId_);
+        if (!script_.LoadScript(cfg.GetString(Config::Id(base, "NERPFile"), ""))) return;
+        script_.LoadMessages(cfg.GetString(Config::Id(base, "NERPMessageFile"), ""));
+        // TODO(objective): the briefing window; scripts start once it has been closed.
+        script_.objectiveSwitch = 1;
+        script_.call = [this](int index, const int* args) { return ScriptCall(index, args); };
+    }
+
+    int CountObjects(std::string_view typeName, int level = -1) const {
+        int n = 0;
+        for (const auto& o : objects_.objects())
+            if (!o->removed && !o->hidden && o->info && EqualsNoCase(o->info->name, typeName) &&
+                (level < 0 || o->level == level))
+                ++n;
+        return n;
+    }
+
+    int ScriptCall(int index, const int* args) {
+        const std::string_view name = nerps::kFunctions[index].name;
+        // Buildings counted by type name (NERPsRuntime_GetLevelObjectsBuilt).
+        static const std::pair<const char*, const char*> kBuilt[] = {
+            {"Barracks", "Barracks"}, {"OreRefineries", "OreRefinery"}, {"ToolStores", "Toolstation"},
+            {"Teleports", "TeleportPad"}, {"Powerstations", "Powerstation"}, {"Docks", "Docks"},
+            {"Geodome", "Geo-dome"}, {"Gunstations", "Gunstation"}, {"UpgradeStations", "Upgrade"},
+            {"VehicleTeleports", "TeleportBIG"},
+        };
+        for (const auto& [suffix, type] : kBuilt) {
+            const std::string s(suffix);
+            if (name == "Get" + s + "Built") return CountObjects(type);
+            if (name == "GetLevel1" + s + "Built") return CountObjects(type, 1);
+            if (name == "GetLevel2" + s + "Built") return CountObjects(type, 2);
+            if (name == "GetPowered" + s + "Built") return 0;  // TODO(power)
+        }
+        if (name == "SetLevelCompleted" || name == "SetLevelFail") {
+            levelStatus_ = name == "SetLevelCompleted" ? 1 : 2;
+            RR_INFO("Level script: %s", std::string(name).c_str());
+        }
+        else if (name == "GetCrystalsCurrentlyStored") return crystals_;
+        else if (name == "GetCrystalsPickedUp") return crystalsPickedUp_;
+        else if (name == "GetOreCurrentlyStored") return ore_;
+        else if (name == "GetOrePickedUp") return orePickedUp_;
+        else if (name == "AddStoredOre") return ore_ += args[0];
+        else if (name == "GetMiniFiguresOnLevel") return CountObjects("Pilot");
+        else if (name == "GetMonstersOnLevel") {
+            int n = 0;
+            for (const auto& o : objects_.objects()) n += !o->removed && !o->hidden && o->type == ObjType::RockMonster;
+            return n;
+        } else if (name == "GetSlugsOnLevel") return CountObjects("Slug");
+        else if (name == "GetHiddenObjectsFound") return hiddenObjectsFound_;
+        else if (name == "SetHiddenObjectsFound") return hiddenObjectsFound_ = args[0];
+        else if (name == "GetObjectiveShowing") return 0;
+        else if (name == "GetMessagesAreUpToDate") return 1;
+        else if (name == "SetMessage") {
+            // The "permit" flag blocks messages while non-zero (scripts clear it to talk).
+            if (script_.messagePermit != 0) return 0;
+            if (const std::string* line = script_.MessageLine(args[0])) {
+                message_ = *line;
+                // TODO(nerps): message timing comes from the speech sample / timer values.
+                script_.messageTimer = 3000.0f + 60.0f * float(line->size());
+                RR_INFO("Message: %s", message_.c_str());
+            }
+            return args[0];
+        } else {
+            static std::vector<std::string> reported;
+            if (std::find(reported.begin(), reported.end(), name) == reported.end()) {
+                reported.emplace_back(name);
+                RR_DEBUG("Script function %s not implemented", std::string(name).c_str());
+            }
+        }
+        return 0;
+    }
+
     static MenuType UnitMenu(const GameObject& o) {
         switch (o.type) {
         case ObjType::MiniFigure: return MenuType::LegoMan;
@@ -410,10 +492,21 @@ public:
         }
         tasks_.Update(objects_, level_, elapsed);
         for (const auto& [bx, by] : level_.TakeExposedBlocks())
-            for (GameObject* o : objects_.ExposeBlock(bx, by))
+            for (GameObject* o : objects_.ExposeBlock(bx, by)) {
+                ++hiddenObjectsFound_;  // NERPsRuntime_IncHiddenObjectsFound
                 if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore) tasks_.CreateCollect(*o);
+            }
         if (int n = level_.TakeCavernsDiscovered()) RR_INFO("%d hidden cavern(s) discovered", n);
         objects_.Update(elapsed);
+        if (script_.loaded() && levelStatus_ == 0) {
+            script_.UpdateTimers(elapsed);
+            script_.Execute();
+        }
+        if (levelStatus_ != 0 && (endTicks_ += 1) > 250) {
+            // TODO(rewards): the rewards screen comes between the level and the front end.
+            GetApp().SetScene(front::CreateFrontEndScene());
+            return;
+        }
         level_.map().UpdateUVs(elapsed);
     }
 
@@ -507,6 +600,16 @@ public:
         res.quota = crystalQuota_;
         res.ore = ore_;
         game.panels->DrawSideBar(r2d, game.toolTipFont.get(), res, frameElapsed);
+        // TODO(interface): the message panel's text window and speech; plain text for now.
+        if (const Font* f = game.textFont.get()) {
+            r2d.SetAnchor(Anchor::Left);
+            if (!message_.empty() && script_.messageTimer > 0.0f) f->Draw(r2d, 90.0f, 440.0f, message_);
+            r2d.SetAnchor(Anchor::Center);
+            if (levelStatus_ != 0) {
+                const std::string s = levelStatus_ == 1 ? "Level complete" : "Level failed";
+                f->Draw(r2d, 320.0f - float(f->StringWidth(s)) * 0.5f, 220.0f, s);
+            }
+        }
         // TODO(interface): proper tooltip boxes (ToolTip_*); plain text for now.
         std::string tip = game.panels->hoverToolTip();
         if (tip.empty()) tip = game.iconPanel->hoverToolTip();
@@ -528,6 +631,11 @@ private:
     TaskSystem tasks_;
     std::vector<BlockPos> debugDigs_;
     int crystals_ = 0, ore_ = 0, crystalQuota_ = 0;
+    int crystalsPickedUp_ = 0, orePickedUp_ = 0, hiddenObjectsFound_ = 0;
+    nerps::Runtime script_;
+    std::string message_;
+    int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
+    int endTicks_ = 0;
     RadarMap radar_;
     uint64_t lastFrameMs_ = 0;
     Vec3f ambient_, topSpot_;
