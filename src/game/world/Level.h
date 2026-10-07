@@ -100,6 +100,13 @@ public:
     // connected hidden block (Level_UncoverHiddenCavern).
     void UncoverHiddenCavern(int x, int y);
 
+    // Resources released by drilling seams since the last call: block to drop on, crystal or ore.
+    struct SeamYield {
+        int x, y;
+        bool crystal;
+    };
+    std::vector<SeamYield> TakeSeamYields() { return std::move(seamYields_); }
+
     // Blocks opened up since the last call (for hidden objects) and caverns found.
     std::vector<std::pair<int, int>> TakeExposedBlocks() { return std::move(exposed_); }
     int TakeCavernsDiscovered() {
@@ -109,6 +116,7 @@ public:
     }
 
 private:
+    std::vector<SeamYield> seamYields_;
     std::vector<std::pair<int, int>> exposed_;
     int cavernsDiscovered_ = 0;
     bool LoadPreDug(const std::string& path);

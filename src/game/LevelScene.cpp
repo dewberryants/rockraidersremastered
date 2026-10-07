@@ -497,6 +497,8 @@ public:
                 if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore) tasks_.CreateCollect(*o);
             }
         if (int n = level_.TakeCavernsDiscovered()) RR_INFO("%d hidden cavern(s) discovered", n);
+        for (const world::Level::SeamYield& y : level_.TakeSeamYields())
+            GenerateResource({y.x, y.y}, y.crystal ? ObjType::PowerCrystal : ObjType::Ore, true);
         objects_.Update(elapsed);
         if (script_.loaded() && levelStatus_ == 0) {
             script_.UpdateTimers(elapsed);

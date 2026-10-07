@@ -282,10 +282,8 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         // Level_Block_Damage: progress by elapsed over the drill time; the wall breaks past 1.
         // TODO(drilling): drill sounds, single-width tunnels (Level_DestroyWallConnection).
         b.damage += elapsed / time;
-        if (b.damage > 1.0f) {
-            level.DestroyWall(o.stateBlock.x, o.stateBlock.y, false);
-            FinishAction(o, true);
-        }
+        // Seams take four rounds: the wall only goes once the last stage is drilled.
+        if (b.damage > 1.0f && level.DestroyWall(o.stateBlock.x, o.stateBlock.y, false)) FinishAction(o, true);
         break;
     }
     case UnitState::Clearing:

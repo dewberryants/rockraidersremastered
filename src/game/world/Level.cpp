@@ -274,7 +274,16 @@ bool Level::DestroyWall(int x, int y, bool hiddenCavern) {
                 map.MoveVertex(x + kCornerX[c], y + kCornerY[c], settings_.digDepth * 0.25f);
             }
         }
-        // TODO(drilling): each stage releases an ore/crystal.
+        b.damage = 0.0f;  // each stage is drilled from scratch
+        // Each stage drops one ore/crystal onto the first open floor beside the seam.
+        // TODO(interface): "seam found" info messages when a seam is first touched.
+        static const int kSideX[4] = {0, 1, 0, -1}, kSideY[4] = {-1, 0, 1, 0};
+        for (int i = 0; i < 4; ++i) {
+            const Block& n = block(x + kSideX[i], y + kSideY[i]);
+            if (!(n.flags & BlockFlag::Ground) || n.terrain == Terrain::Lake || n.terrain == Terrain::Lava) continue;
+            seamYields_.push_back({x + kSideX[i], y + kSideY[i], b.terrain == Terrain::CrystalSeam});
+            break;
+        }
         if (++b.seamDigs != 4) return false;
         b.terrain = Terrain::Soil;
         for (int c = 0; c < 4; ++c) block(x + kCornerX[c], y + kCornerY[c]).pointState = 1;
