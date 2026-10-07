@@ -314,7 +314,26 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
     }
 }
 
+namespace {
+// Stats sound names ("Drillsound SND_pilotdrill") to sample ids.
+int StatSound(const GameObject& o, std::string_view key) {
+    int id = 0;
+    if (!o.stats) return -1;
+    const std::string name = o.stats->Str(key, o.level);
+    const int r = !name.empty() && GetSfx().GetType(name, id) ? id : -1;
+    RR_INFO("TMPSND %.*s '%s' -> %d", int(key.size()), key.data(), name.c_str(), r);
+    return r;
+}
+}  // namespace
+
 void ObjectList::FinishAction(GameObject& o, bool success) {
+    if (o.drillSound >= 0) {
+        // Drilling stopped: the loop is cut and the drill winds down.
+        GetSfx().Stop(o.drillSound);
+        o.drillSound = -1;
+        const int fade = StatSound(o, "Drillfadesound");
+        if (fade >= 0) GetSfx().PlayAt(fade, Vec3{o.position.x, o.position.y, o.position.z});
+    }
     RR_DEBUG("%s finished action (state %d): %s", o.info->name.c_str(), int(o.state), success ? "ok" : "failed");
     o.state = UnitState::Idle;
     o.stateTarget = nullptr;
@@ -349,6 +368,10 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
             break;
         }
         if (o.singleWidthDig) time *= 0.5f;
+        if (o.drillSound < 0) {
+            const int id = StatSound(o, "Drillsound");
+            if (id >= 0) o.drillSound = GetSfx().PlayAt(id, Vec3{o.position.x, o.position.y, o.position.z}, true);
+        }
         // Level_Block_Damage: progress by elapsed over the drill time; the wall breaks past 1.
         // TODO(drilling): drill sounds, single-width tunnels (Level_DestroyWallConnection).
         b.damage += elapsed / time;

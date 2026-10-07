@@ -79,6 +79,7 @@ struct GameObject {
     bool teleportingIn = false;            // playing Activity_TeleportIn after arriving
     std::vector<ToolType> tools;           // minifigure tool belt, oldest first
     ToolType wantedTool = ToolType::Count; // tool to pick up at the tool store
+    int drillSound = -1;                   // play handle of the looping drill sound
     bool powered = false;                  // building: drawing power (or generating it)
     bool powerOff = false;                 // building: switched off by the player
     GameObject* teleportService = nullptr; // teleport building: the unit it is bringing in
