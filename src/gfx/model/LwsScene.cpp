@@ -6,6 +6,7 @@
 #include <sstream>
 #include <unordered_map>
 
+#include "config/Config.h"
 #include "core/Log.h"
 #include "fs/FileSystem.h"
 #include "fs/Path.h"
@@ -95,6 +96,18 @@ std::shared_ptr<LwsScene> LoadLws(const std::string& pathIn, const std::string& 
             node.isNull = key == "AddNullObject";
             if (node.isNull) {
                 node.name = rest;
+                if (StartsWithNoCase(rest, "SFX,")) {
+                    const auto parts = SplitTokens(rest, ",");
+                    for (size_t i = 2; i < parts.size(); ++i) {
+                        LwsSound snd;
+                        snd.sample = std::string(parts[1]);
+                        const std::string f(parts[i]);
+                        snd.start = std::atoi(f.c_str());
+                        const size_t dash = f.find('-');
+                        snd.end = dash == std::string::npos ? snd.start : std::atoi(f.c_str() + dash + 1);
+                        scene->sounds.push_back(std::move(snd));
+                    }
+                }
             } else {
                 const std::string file = FileNamePart(rest);
                 node.name = StripExtension(file);

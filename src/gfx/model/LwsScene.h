@@ -34,11 +34,19 @@ struct LwsNode {
     bool unseenByCamera = false;
 };
 
+// A sound cue in a scene (Lws_SetupSoundTriggers): a null object named
+// "SFX,<sample>,<frame>[,<frame>...]"; a frame may be a range "<start>-<end>".
+struct LwsSound {
+    std::string sample;
+    int start = 0, end = 0;  // end > start: the sound plays over a range
+};
+
 struct LwsScene {
     std::string path;
     int firstFrame = 0, lastFrame = 0;
     float fps = 25.0f;
     std::vector<LwsNode> nodes;
+    std::vector<LwsSound> sounds;
 
     int frameCount() const { return lastFrame; }
     int FindNode(std::string_view name) const;

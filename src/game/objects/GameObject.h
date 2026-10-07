@@ -55,6 +55,7 @@ struct GameObject {
     float animTime2 = 0.0f;      // second part of two-part vehicles
     const Activity* anim = nullptr;
     const Activity* anim2 = nullptr;
+    bool animFresh = false;      // anim just started: its frame-0 sound cues are still due
 
     // Routing: the block route, the curve towards the current node and the distance along it.
     std::vector<RouteNode> route;
@@ -180,6 +181,7 @@ public:
     void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 
 private:
+    void PlaySceneSounds(const LwsScene& scene, bool loop, float t0, float t1, const Vec3f& at);
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);
     void UpdateAction(GameObject& o, float elapsed);

@@ -9,6 +9,7 @@
 #include "core/Random.h"
 #include "fs/Path.h"
 #include "game/Construction.h"
+#include "game/Sfx.h"
 #include "game/ai/Tasks.h"
 #include "game/world/Level.h"
 #include "gfx/Renderer3D.h"
@@ -47,6 +48,7 @@ bool GameObject::UpdateActivityChange() {
         if (const Activity* a = FindAnim(info->model.activities, nextActivity)) {
             anim = a;
             animTime = 0.0f;
+            animFresh = true;
             found = true;
         }
         if (const Activity* a = FindAnim(info->model.secondPart, nextActivity)) {
@@ -213,7 +215,12 @@ void ObjectList::Update(float elapsed) {
         GameObject& o = *op;
         if (o.removed) continue;
         o.UpdateActivityChange();
+        const Activity* before = o.anim;
+        const float t0 = o.animFresh ? -0.001f : o.animTime;  // a new animation also passes frame 0
+        o.animFresh = false;
         o.MoveAnimation(elapsed, CalculateSpeeds(o, elapsed).anim);
+        if (o.anim && o.anim == before && o.anim->scene && !o.hidden)
+            PlaySceneSounds(*o.anim->scene, o.anim->looping, t0, o.animTime, o.position);
         if (o.teleportingIn) {
             // Arrived once the beam-in animation has played through.
             if (o.animOverrun > 0.0f) {
@@ -240,6 +247,27 @@ void ObjectList::Update(float elapsed) {
         const GameObject& c = *o.carrier;
         o.position = {c.position.x + c.faceDir.x * 4.0f, c.position.y + c.faceDir.y * 4.0f, c.position.z - 8.0f};
         o.heading = c.heading;
+    }
+}
+
+void ObjectList::PlaySceneSounds(const LwsScene& scene, bool loop, float t0, float t1, const Vec3f& at) {
+    if (scene.sounds.empty() || t1 <= t0) return;
+    const float frames = float(scene.frameCount());
+    for (const LwsSound& s : scene.sounds) {
+        const float f = float(s.start);
+        // Passed this tick: between the old and new time, every loop for looping animations.
+        bool passed;
+        if (loop && frames > 0.0f)
+            passed = std::floor((t1 - f) / frames) > std::floor((t0 - f) / frames);
+        else
+            passed = t0 < f && f <= t1;
+        if (!passed) continue;
+        int id = 0;
+        // TODO(audio): ranges keep playing until their end frame (Sound3D_StopSound there).
+        if (GetSfx().GetType(s.sample, id)) {
+            GetSfx().PlayAt(id, Vec3{at.x, at.y, at.z});
+            RR_DEBUG("Scene sound %s", s.sample.c_str());
+        }
     }
 }
 
