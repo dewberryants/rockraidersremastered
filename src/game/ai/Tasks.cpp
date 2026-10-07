@@ -97,6 +97,9 @@ void TaskSystem::Reset() {
     tasks_.clear();
     priorityValue_.fill(0);
     priorityOff_.fill(false);
+    order_.clear();
+    initialOrder_.clear();
+    initialOff_.clear();
 }
 
 void TaskSystem::LoadPriorities(const Config& cfg, std::string_view levelBlock) {
@@ -107,9 +110,45 @@ void TaskSystem::LoadPriorities(const Config& cfg, std::string_view levelBlock) 
             if (!EqualsNoCase(cfg.item(it).key, PriorityTypeName(PriorityType(p)))) continue;
             priorityValue_[size_t(p)] = 80 - 5 * index;
             priorityOff_[size_t(p)] = ParseBool(cfg.item(it).value) != BoolTri::True;
+            order_.push_back(PriorityType(p));
+            initialOff_.push_back(priorityOff_[size_t(p)]);
             ++index;
             break;
         }
+    }
+    initialOrder_ = order_;
+}
+
+void TaskSystem::MovePriorityUp(size_t slot) {
+    if (slot == 0 || slot >= order_.size()) return;
+    std::swap(order_[slot], order_[slot - 1]);
+    priorityValue_[size_t(order_[slot])] = 80 - 5 * int(slot);
+    priorityValue_[size_t(order_[slot - 1])] = 85 - 5 * int(slot);
+}
+
+void TaskSystem::MovePriorityTop(size_t slot) {
+    if (slot == 0 || slot >= order_.size()) return;
+    const PriorityType moved = order_[slot];
+    for (size_t i = slot; i > 0; --i) {
+        order_[i] = order_[i - 1];
+        priorityValue_[size_t(order_[i])] = 80 - 5 * int(i);
+    }
+    order_[0] = moved;
+    priorityValue_[size_t(moved)] = 80;
+}
+
+void TaskSystem::TogglePriority(size_t slot) {
+    if (slot >= order_.size()) return;
+    bool& off = priorityOff_[size_t(order_[slot])];
+    off = !off;
+    // TODO(interface): switching off crystals or ore shows Text_CrystalOreDisabled.
+}
+
+void TaskSystem::ResetPriorities() {
+    order_ = initialOrder_;
+    for (size_t i = 0; i < order_.size(); ++i) {
+        priorityValue_[size_t(order_[i])] = 80 - 5 * int(i);
+        priorityOff_[size_t(order_[i])] = initialOff_[i];
     }
 }
 
@@ -398,8 +437,10 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
 
     // Highest priority first; the list already holds newer tasks before older ones.
     std::vector<Task*> order;
-    for (auto& t : tasks_)
+    for (auto& t : tasks_) {
+        if (t->type != TaskType::GetTool) t->priority = priorityValue_[size_t(t->priorityType)];
         if (!t->assigned && !t->remove) order.push_back(t.get());
+    }
     std::stable_sort(order.begin(), order.end(), [](const Task* a, const Task* b) { return a->priority > b->priority; });
 
     for (Task* t : order) {

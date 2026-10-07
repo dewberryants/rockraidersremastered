@@ -9,6 +9,7 @@
 #include "game/Effects.h"
 #include "game/ui/Interface.h"
 #include "game/ui/Panels.h"
+#include "game/ui/Priorities.h"
 
 namespace rr {
 
@@ -32,6 +33,7 @@ struct Game {
     std::unique_ptr<front::FrontEnd> frontEnd;
     std::unique_ptr<IconPanel> iconPanel;  // in-game icon menus (Interface_Initialise(565, 18))
     std::unique_ptr<Panels> panels;        // HUD panels (Lego_LoadPanels, Lego_LoadPanelButtons)
+    std::unique_ptr<PriorityPanel> priorities;  // priority list contents (Priorities_LoadImages)
     Dependencies dependencies;             // build requirements (Dependencies_Initialise)
     RockFallEffects rockFalls;             // wall collapse scenes (Effect_Load_RockFallStylesAll)
 

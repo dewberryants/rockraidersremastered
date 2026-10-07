@@ -1,12 +1,14 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "config/Config.h"
+#include "core/Math3D.h"
 #include "gfx/Image.h"
 
 namespace rr {
@@ -42,6 +44,16 @@ public:
     void Reset();  // every panel closed (Panel_ResetAll)
 
     void Toggle(PanelType p);
+    void SetOpen(PanelType p, bool open) { panels_[size_t(p)].open = open; }
+    // Closed and done sliding (Panel_IsFullyClosed).
+    bool IsFullyClosed(PanelType p) const {
+        const Panel& q = panels_[size_t(p)];
+        return !q.open && q.x == q.closedX && q.y == q.closedY;
+    }
+    // Current position in 640-wide layout coordinates, and the anchor offset it is drawn with.
+    Vec2 Position(PanelType p) const { return {std::round(panels_[size_t(p)].x), std::round(panels_[size_t(p)].y)}; }
+    float AnchorX(PanelType p) const { return panels_[size_t(p)].anchorX; }
+    void SetAnchor(Renderer2D& r, PanelType p) { AnchorFor(r, p); }
     bool IsOpen(PanelType p) const { return panels_[size_t(p)].open; }
     // Open and done sliding (Panel_IsFullyOpen).
     bool IsFullyOpen(PanelType p) const {

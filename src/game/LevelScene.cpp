@@ -136,6 +136,10 @@ public:
         IconPanel& panel = *game.iconPanel;
         panel.BackToMain();
         panel.isEnabled = [this](MenuItem item) { return ItemEnabled(item); };
+        panel.onPanelMenu = [](MenuType m, bool open) {
+            if (m == MenuType::Priorities) GetGame().panels->SetOpen(PanelType::PriorityList, open);
+            // TODO(interface): the encyclopedia panel.
+        };
         panel.onItem = [this](MenuItem item) { OnMenuItem(item); };
         game.dependencies.ResetLevel();
         panel.isBuildEnabled = [this](const ObjectTypeInfo& t) { return GetGame().dependencies.Met(t, objects_); };
@@ -254,8 +258,15 @@ public:
     // selected; with units selected, clicking open floor sends them there.
     void HandleWorldClick(Input& in) {
         IconPanel& panel = *GetGame().iconPanel;
-        // HUD panels and the icon menu take clicks over them (Panel_CheckCollision first).
-        if (GetGame().panels->HandleInput(in)) return;
+        // The priority list's images, then the HUD panels and the icon menu take clicks over them
+        // (Priorities_HandleInput, Panel_CheckCollision).
+        Panels& panels = *GetGame().panels;
+        if (panels.IsFullyOpen(PanelType::PriorityList)) {
+            const Vec2 p = panels.Position(PanelType::PriorityList);
+            if (GetGame().priorities->HandleInput(in, p.x + panels.AnchorX(PanelType::PriorityList), p.y, tasks_))
+                return;
+        }
+        if (panels.HandleInput(in)) return;
         if (panel.HandleInput(in)) return;
         if (placing_) {
             UpdatePlacement(in);
@@ -489,6 +500,37 @@ public:
     void OnPanelButton(PanelButton b) {
         switch (b) {
         case PanelButton::RadarToggle: GetGame().panels->Toggle(PanelType::Radar); break;
+        case PanelButton::TopPanelPriorities: {
+            IconPanel& icons = *GetGame().iconPanel;
+            if (icons.menu() == MenuType::Priorities)
+                icons.BackToMain();
+            else
+                icons.OpenMenu(MenuType::Priorities);
+            break;
+        }
+        case PanelButton::PriorityListClose: GetGame().iconPanel->BackToMain(); break;
+        case PanelButton::PriorityListReset: tasks_.ResetPriorities(); break;
+        case PanelButton::PriorityListDisable1:
+        case PanelButton::PriorityListDisable2:
+        case PanelButton::PriorityListDisable3:
+        case PanelButton::PriorityListDisable4:
+        case PanelButton::PriorityListDisable5:
+        case PanelButton::PriorityListDisable6:
+        case PanelButton::PriorityListDisable7:
+        case PanelButton::PriorityListDisable8:
+        case PanelButton::PriorityListDisable9:
+            tasks_.TogglePriority(size_t(int(b) - int(PanelButton::PriorityListDisable1)));
+            break;
+        case PanelButton::PriorityListUpOne1:
+        case PanelButton::PriorityListUpOne2:
+        case PanelButton::PriorityListUpOne3:
+        case PanelButton::PriorityListUpOne4:
+        case PanelButton::PriorityListUpOne5:
+        case PanelButton::PriorityListUpOne6:
+        case PanelButton::PriorityListUpOne7:
+        case PanelButton::PriorityListUpOne8:
+            tasks_.MovePriorityUp(size_t(int(b) - int(PanelButton::PriorityListUpOne1)) + 1);
+            break;
         case PanelButton::RadarMapView: GetGame().panels->radarMapView = true; break;
         case PanelButton::RadarTaggedObjectView: GetGame().panels->radarMapView = false; break;
         // TODO(radar): the game steps zoom by the click handler's amount; 1 per click here.
@@ -1132,6 +1174,12 @@ public:
             r2d.SetAnchor(Anchor::Center);
         }
         game.panels->DrawPanels(r2d, frameElapsed);
+        if (!game.panels->IsFullyClosed(PanelType::PriorityList)) {
+            game.panels->SetAnchor(r2d, PanelType::PriorityList);
+            const Vec2 p = game.panels->Position(PanelType::PriorityList);
+            game.priorities->Draw(r2d, p.x, p.y, tasks_);
+        }
+        game.iconPanel->Update(frameElapsed);
         r2d.SetAnchor(Anchor::Right);
         game.iconPanel->Draw(r2d);
         r2d.SetAnchor(Anchor::Center);
@@ -1150,6 +1198,7 @@ public:
         objective_.Draw(r2d);
         // TODO(interface): proper tooltip boxes (ToolTip_*); plain text for now.
         std::string tip = game.panels->hoverToolTip();
+        if (tip.empty() && game.panels->IsFullyOpen(PanelType::PriorityList)) tip = game.priorities->hoverToolTip();
         if (tip.empty()) tip = game.iconPanel->hoverToolTip();
         if (const Font* f = game.toolTipFont.get(); f && !tip.empty())
             f->Draw(r2d, GetApp().input().mouseX() + 16, GetApp().input().mouseY() + 16, tip);

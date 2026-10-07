@@ -38,6 +38,8 @@ enum class MenuType : int {
     Main, Ground, Erode, PlaceFence, Construction, Rubble, Unused6, Wall, Creature, LegoMan, Vehicle,
     WaterVehicle, UnmannedVehicle, Building, ElectricFence, FirstPerson, GetTool, TrainSkill, UpgradeVehicle,
     BuildBuilding, BuildSmallVehicle, BuildLargeVehicle,
+    // Not icon menus: the priority list and encyclopedia panels take the menu's place.
+    Priorities, Encyclopedia,
     Count
 };
 
@@ -58,9 +60,17 @@ public:
 
     void Load(const Config& cfg, std::string_view gameName, float originX = 565.0f, float originY = 18.0f);
 
+    // Interface_OpenMenu: the current menu slides off to the right, the new one comes back on
+    // (_Interface_OpenMenu_SetNext). Reopening the shown menu only updates the block.
     void OpenMenu(MenuType menu, const BlockPos* block = nullptr);
     void BackToMain() { OpenMenu(MenuType::Main); }
     MenuType menu() const { return menu_; }
+    // Interface_FUN_0041e9f0: advances the slide by the unscaled frame time.
+    void Update(float elapsedAbs);
+    bool Settled() const { return slide_ == Slide::Settled; }
+    // The priority list / encyclopedia panel opens (true) once the menu is off screen, and
+    // closes (false) when another menu is chosen.
+    std::function<void(MenuType, bool)> onPanelMenu;
     const BlockPos& block() const { return block_; }
 
     // Decides per item whether it is shown enabled (the game greys out unusable items).
@@ -114,6 +124,11 @@ private:
     std::string backToolTip_;
 
     float originX_ = 565, originY_ = 18;
+    float x_ = 565;  // current x of the menu (originX_ when on screen)
+    enum class Slide { Settled, Out, In, Away } slide_ = Slide::Settled;
+    MenuType next_ = MenuType::Main;
+    BlockPos nextBlock_;
+    bool panelOpen_ = false;  // a panel menu is open
     MenuType menu_ = MenuType::Main;
     BlockPos block_;
     int hover_ = -1;  // icon index under the mouse, -2 = back button

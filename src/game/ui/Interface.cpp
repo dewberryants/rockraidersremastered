@@ -7,6 +7,7 @@
 #include "fs/Path.h"
 #include "game/objects/ObjectRegistry.h"
 #include "game/objects/Stats.h"
+#include "game/Sfx.h"
 #include "platform/Input.h"
 
 namespace rr {
@@ -64,6 +65,8 @@ const char* MenuItemName(MenuItem item) {
 void IconPanel::Load(const Config& cfg, std::string_view gameName, float originX, float originY) {
     originX_ = originX;
     originY_ = originY;
+    x_ = originX;
+    slide_ = Slide::Settled;
 
     // Item images: normal:disabled:pressed:tooltip[|sfx]:disabledTooltip[|sfx]:key[:TRUE]
     for (Config::ItemRef it = cfg.FindArray(Config::Id(gameName, "InterfaceImages")); it != Config::kNone;
@@ -165,12 +168,63 @@ void IconPanel::Load(const Config& cfg, std::string_view gameName, float originX
     }
 }
 
+namespace {
+// Interface_SetScrollParameters(565, 18, 640 + 10, 18, 750): off-screen x and the slide speed
+// per 1/25 s of unscaled time.
+constexpr float kMenuOffX = 650.0f, kMenuSlideSpeed = 750.0f * 0.04f;
+
+bool IsPanelMenu(MenuType m) { return m == MenuType::Priorities || m == MenuType::Encyclopedia; }
+
+void PlayInterfaceSfx(std::string_view name) {
+    int id = 0;
+    if (GetSfx().GetType(name, id)) GetSfx().PlayNormal(id);
+}
+}  // namespace
+
 void IconPanel::OpenMenu(MenuType menu, const BlockPos* block) {
-    // TODO(interface): menus slide out and in (Interface_OpenMenu_SetNext).
-    menu_ = menu;
-    if (block) block_ = *block;
+    const bool shown = slide_ == Slide::Settled || slide_ == Slide::Away;
+    if (shown && menu == menu_) {
+        if (block) block_ = *block;
+        next_ = menu;
+        return;
+    }
+    if (slide_ != Slide::Out) PlayInterfaceSfx("SFX_InterfaceSlideOffScreen");
+    slide_ = Slide::Out;
+    next_ = menu;
+    if (block) nextBlock_ = *block;
     hover_ = -1;
     pressed_ = false;
+}
+
+void IconPanel::Update(float elapsedAbs) {
+    if (slide_ == Slide::Out) {
+        if (panelOpen_) {
+            // Leaving the priority list: its panel closes and the menu is already off screen.
+            panelOpen_ = false;
+            if (onPanelMenu) onPanelMenu(menu_, false);
+            x_ = kMenuOffX;
+        }
+        x_ += elapsedAbs * kMenuSlideSpeed;
+        if (x_ >= kMenuOffX) {
+            x_ = kMenuOffX;
+            PlayInterfaceSfx("SFX_InterfaceSlideOnScreen");
+            menu_ = next_;
+            block_ = nextBlock_;
+            if (IsPanelMenu(menu_)) {
+                slide_ = Slide::Away;
+                panelOpen_ = true;
+                if (onPanelMenu) onPanelMenu(menu_, true);
+            } else {
+                slide_ = Slide::In;
+            }
+        }
+    } else if (slide_ == Slide::In) {
+        x_ -= elapsedAbs * kMenuSlideSpeed;
+        if (x_ <= originX_) {
+            x_ = originX_;
+            slide_ = Slide::Settled;
+        }
+    }
 }
 
 std::vector<IconPanel::Entry> IconPanel::Entries() const {
@@ -241,7 +295,7 @@ RectF IconPanel::ItemRect(size_t index) const {
     }
     const Image* img = index < entries.size() ? EntryImage(entries[index], true, false) : nullptr;
     const float w = img ? float(img->width()) : 40.0f, h = img ? float(img->height()) : 40.0f;
-    return {originX_, y, w, h};
+    return {x_, y, w, h};
 }
 
 bool IconPanel::HandleInput(const Input& in) {
@@ -249,6 +303,10 @@ bool IconPanel::HandleInput(const Input& in) {
     const auto entries = Entries();
     hover_ = -1;
     hoverToolTip_.clear();
+    if (slide_ != Slide::Settled) {
+        pressed_ = false;
+        return false;
+    }
     bool over = false;
     for (size_t i = 0; i < entries.size(); ++i) {
         if (!ItemRect(i).Contains(mx, my)) continue;
@@ -264,13 +322,13 @@ bool IconPanel::HandleInput(const Input& in) {
     }
     if (HasBackButton(menu_)) {
         const Surround& s = surrounds_[std::min(entries.size(), surrounds_.size() - 1)];
-        const RectF back{originX_ + s.noBackX, originY_ + s.noBackY, backX_, backY_};
+        const RectF back{x_ + s.noBackX, originY_ + s.noBackY, backX_, backY_};
         if (back.Contains(mx, my)) {
             hover_ = -2;
             over = true;
             hoverToolTip_ = backToolTip_;
         }
-        if (s.image && RectF{originX_ + s.x, originY_ + s.y, float(s.image->width()), float(s.image->height())}
+        if (s.image && RectF{x_ + s.x, originY_ + s.y, float(s.image->width()), float(s.image->height())}
                            .Contains(mx, my))
             over = true;
     }
@@ -295,14 +353,15 @@ bool IconPanel::HandleInput(const Input& in) {
 }
 
 void IconPanel::Draw(Renderer2D& r) const {
+    if (x_ >= kMenuOffX) return;
     const auto entries = Entries();
     const Surround& s = surrounds_[std::min(entries.size(), surrounds_.size() - 1)];
     if (!HasBackButton(menu_)) {
-        if (s.imageNoBack) s.imageNoBack->Draw(r, originX_ + s.altX, originY_ + s.altY);
+        if (s.imageNoBack) s.imageNoBack->Draw(r, x_ + s.altX, originY_ + s.altY);
     } else {
-        if (s.image) s.image->Draw(r, originX_ + s.x, originY_ + s.y);
+        if (s.image) s.image->Draw(r, x_ + s.x, originY_ + s.y);
         const Image* b = hover_ == -2 ? (pressed_ ? backPressed_.get() : backHighlight_.get()) : nullptr;
-        if (b) b->Draw(r, originX_ + s.noBackX, originY_ + s.noBackY);
+        if (b) b->Draw(r, x_ + s.noBackX, originY_ + s.noBackY);
     }
     for (size_t i = 0; i < entries.size(); ++i) {
         const Image* img = EntryImage(entries[i], EntryEnabled(entries[i]), pressed_ && hover_ == int(i));

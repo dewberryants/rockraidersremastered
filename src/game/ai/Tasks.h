@@ -63,6 +63,15 @@ public:
     // Priorities_LoadLevel: values 80, 75, 70, ... in list order; FALSE switches a type off.
     void LoadPriorities(const Config& cfg, std::string_view levelBlock);
 
+    // The level's priority list as the priority panel shows it (Priorities_*). Slot i is worth
+    // 80 - 5i; tasks take their type's current value on every update.
+    const std::vector<PriorityType>& priorityOrder() const { return order_; }
+    bool PriorityOff(PriorityType p) const { return priorityOff_[size_t(p)]; }
+    void MovePriorityUp(size_t slot);   // Priorities_MovePriorityUp: swap with the slot above
+    void MovePriorityTop(size_t slot);  // Priorities_MovePriorityTop
+    void TogglePriority(size_t slot);   // Priorities_TurnPriorityOff (toggles)
+    void ResetPriorities();             // Priorities_Reset: the level's order and switches
+
     Task* CreateDig(const world::Level& level, BlockPos block, bool userRequested);
     Task* CreateClear(BlockPos block);
     // AITask_DoReinforce_AtBlockPos.
@@ -105,6 +114,8 @@ private:
     std::vector<std::unique_ptr<Task>> tasks_;
     std::array<int, size_t(PriorityType::Count)> priorityValue_{};
     std::array<bool, size_t(PriorityType::Count)> priorityOff_{};
+    std::vector<PriorityType> order_, initialOrder_;
+    std::vector<bool> initialOff_;
     unsigned approachCounter_ = 0;  // rotates the side units approach walls from
 };
 

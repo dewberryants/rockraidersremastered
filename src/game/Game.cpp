@@ -39,6 +39,8 @@ bool Game::Initialise(const Config& cfg) {
     iconPanel->Load(cfg, gameName);
     panels = std::make_unique<Panels>();
     panels->Load(cfg, gameName);
+    priorities = std::make_unique<PriorityPanel>();
+    priorities->Load(cfg, gameName);
     dependencies.Load(cfg, gameName);
     rockFalls.Load(cfg, gameName);
     RR_INFO("Object models loaded in %llu ms", (unsigned long long)(SDL_GetTicks64() - t0));

@@ -197,12 +197,12 @@ void Panels::AnchorFor(Renderer2D& r, PanelType t) {
 void Panels::DrawPanels(Renderer2D& r, float elapsed) {
     // Lego_MainLoop drawing order; the radar map itself is drawn before this by the level.
     for (PanelType t : {PanelType::RadarFill, PanelType::Radar, PanelType::MessagesSide, PanelType::CameraControl,
-                        PanelType::TopPanel}) {
+                        PanelType::TopPanel, PanelType::PriorityList}) {
         if (t == PanelType::RadarFill && radarMapView) continue;
         AnchorFor(r, t);
         DrawPanel(r, t, elapsed);
     }
-    // TODO(interface): priority list, encyclopedia, information and info dock panels.
+    // TODO(interface): encyclopedia, information and info dock panels.
     r.SetAnchor(Anchor::Center);
 }
 
