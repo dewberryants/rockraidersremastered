@@ -8,6 +8,7 @@
 #include "core/Log.h"
 #include "fs/Path.h"
 #include "game/Game.h"
+#include "game/Construction.h"
 #include "game/Messages.h"
 #include "core/Random.h"
 #include "game/ai/Tasks.h"
@@ -55,6 +56,14 @@ public:
         tasks_.Reset();
         tasks_.LoadPriorities(cfg, Config::Id(game.gameName, levelId_));
         objects_.onActionDone = [this](GameObject& u, bool ok) { OnActionDone(u, ok); };
+        objects_.onFetch = [this](GameObject& u) { return FetchFromStore(u); };
+        objects_.onPlace = [this](GameObject& u, GameObject& item) { PlaceOnSite(u, item); };
+        tasks_.hasStock = [this](ObjType t) { return t == ObjType::PowerCrystal ? crystals_ > 0 : ore_ > 0; };
+        tasks_.zoneBlock = [this](int zone, BlockPos& b) {
+            for (const auto& z : zones_)
+                if (z->handle == zone) return SiteApproach(*z, b);
+            return false;
+        };
         objects_.onDeposit = [this](GameObject&, GameObject& item, GameObject&) {
             // TODO(resources): refinery and building-specific storage, info messages.
             if (item.type == ObjType::PowerCrystal) {
@@ -71,6 +80,34 @@ public:
             if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore || o->type == ObjType::Dynamite ||
                 o->type == ObjType::Barrier)
                 tasks_.CreateCollect(*o);
+        // Debug set-up for scripted tests: RR_DEBUG_PATH="x,y;..." lays power paths,
+        // RR_DEBUG_STOCK="crystals,ore" fills storage, RR_DEBUG_BUILDLEVEL=n upgrades buildings.
+        if (const char* paths = std::getenv("RR_DEBUG_PATH")) {
+            for (std::string_view entry : SplitTokens(paths, ";")) {
+                const auto xy = SplitTokens(entry, ",");
+                if (xy.size() != 2) continue;
+                const int x = std::atoi(std::string(xy[0]).c_str()), y = std::atoi(std::string(xy[1]).c_str());
+                if (!level_.InBounds(x, y)) continue;
+                level_.block(x, y).flags |= world::BlockFlag::Path;
+                level_.UpdateSurface(x, y);
+            }
+        }
+        if (const char* stock = std::getenv("RR_DEBUG_STOCK")) {
+            const auto v = SplitTokens(stock, ",");
+            crystals_ = std::atoi(std::string(v[0]).c_str());
+            if (v.size() > 1) ore_ = std::atoi(std::string(v[1]).c_str());
+        }
+        if (const char* lvl = std::getenv("RR_DEBUG_BUILDLEVEL"))
+            for (const auto& o : objects_.objects())
+                if (o->type == ObjType::Building) o->level = std::atoi(lvl);
+        // RR_DEBUG_BUILD="Type,x,y,dir" starts a construction site without the placement checks.
+        if (const char* build = std::getenv("RR_DEBUG_BUILD")) {
+            const auto f = SplitTokens(build, ",");
+            const ObjectTypeInfo* t = f.size() == 4 ? GetObjectRegistry().Find(f[0]) : nullptr;
+            if (t && t->type == ObjType::Building)
+                StartConstruction(*t, {std::atoi(std::string(f[1]).c_str()), std::atoi(std::string(f[2]).c_str())},
+                                  std::atoi(std::string(f[3]).c_str()) & 3);
+        }
         // Debug: RR_DEBUG_DIG="x,y;x,y;..." queues dig requests at the start (for scripted tests).
         if (const char* dig = std::getenv("RR_DEBUG_DIG")) {
             for (std::string_view entry : SplitTokens(dig, ";")) {
@@ -89,6 +126,9 @@ public:
         panel.BackToMain();
         panel.isEnabled = [this](MenuItem item) { return ItemEnabled(item); };
         panel.onItem = [this](MenuItem item) { OnMenuItem(item); };
+        game.dependencies.ResetLevel();
+        panel.isBuildEnabled = [this](const ObjectTypeInfo& t) { return GetGame().dependencies.Met(t, objects_); };
+        panel.onBuild = [this](const ObjectTypeInfo& t) { BeginPlacement(t); };
         auto rgb = [&](std::string_view key, Vec3f fallback) {
             float r, g, b;
             return cfg.GetRGB(game.Id("Main", key), r, g, b) ? Vec3f{r, g, b} : fallback;
@@ -165,6 +205,10 @@ public:
         // HUD panels and the icon menu take clicks over them (Panel_CheckCollision first).
         if (GetGame().panels->HandleInput(in)) return;
         if (panel.HandleInput(in)) return;
+        if (placing_) {
+            UpdatePlacement(in);
+            return;
+        }
         if (!in.leftReleased() && !in.rightReleased()) return;
         if (in.rightReleased()) {
             // TODO(interface): right-click handling of the original (menus, cancel).
@@ -243,6 +287,9 @@ public:
             return blk.terrain != world::Terrain::Immovable && !(blk.flags & world::BlockFlag::Ground);
         case MenuItem::ClearRubble: return (blk.flags & world::BlockFlag::Ground) && !(blk.flags & world::BlockFlag::CleanFloor);
         case MenuItem::DeselectDig: return (blk.flags & world::BlockFlag::DigRequested) != 0;
+        case MenuItem::BuildBuilding:
+        case MenuItem::BuildSmallVehicle:
+        case MenuItem::BuildLargeVehicle: return true;
         case MenuItem::TeleportMan: {
             // A building that can beam Rock Raiders in, and room in the queue.
             if (teleportQueue_.size() >= kMaxTeleportQueue) return false;
@@ -267,6 +314,10 @@ public:
             if (t) level_.block(b.x, b.y).flags |= world::BlockFlag::DigRequested;
             break;
         case MenuItem::ClearRubble: t = tasks_.CreateClear(b); break;
+        // Interface_DoAction: the build icons open their lists.
+        case MenuItem::BuildBuilding: panel.OpenMenu(MenuType::BuildBuilding); return;
+        case MenuItem::BuildSmallVehicle: panel.OpenMenu(MenuType::BuildSmallVehicle); return;
+        case MenuItem::BuildLargeVehicle: panel.OpenMenu(MenuType::BuildLargeVehicle); return;
         case MenuItem::TeleportMan:
             // Lego_TryTeleportObject: Rock Raiders wait for a teleporter (LegoObject_QueueTeleport).
             if (const ObjectTypeInfo* pilot = GetObjectRegistry().Get(ObjType::MiniFigure, 0))
@@ -438,6 +489,192 @@ public:
         }
     }
 
+    // Building placement (SelectPlace): the footprint follows the block under the cursor, facing
+    // the camera (Lego_TryTeleportObject picks the direction from the camera's orientation).
+    void BeginPlacement(const ObjectTypeInfo& type) {
+        if (type.type != ObjType::Building) {
+            RR_INFO("Ordering %s: vehicles are not implemented yet", type.name.c_str());  // TODO(vehicles)
+            return;
+        }
+        placing_ = &type;
+        GetGame().iconPanel->BackToMain();
+    }
+
+    int PlacementDirection() const {
+        const world::TopDownCamera::View view = camera_.Compute(&level_.map());
+        const float fx = view.forward.x, fy = view.forward.y;
+        if (std::abs(fx) <= std::abs(fy)) return fy > 0.0f ? 2 : 0;
+        return fx > 0.0f ? 3 : 1;
+    }
+
+    void UpdatePlacement(Input& in) {
+        placeValid_ = false;
+        placeFootprint_.clear();
+        Vec3f origin, dir, hit;
+        MouseRay(in.mouseX(), in.mouseY(), origin, dir);
+        BlockPos b;
+        if (PickGround(origin, dir, hit) && level_.map().WorldToBlock(hit.x, hit.y, b.x, b.y)) {
+            placeDir_ = PlacementDirection();
+            placeOrigin_ = b;
+            placeFootprint_ = BuildingFootprint(*placing_, b, placeDir_);
+            placeValid_ = CanPlaceBuilding(level_, placeFootprint_);
+        }
+        if (in.rightReleased()) {
+            placing_ = nullptr;
+        } else if (in.leftReleased() && placeValid_) {
+            StartConstruction(*placing_, placeOrigin_, placeDir_);
+            placing_ = nullptr;
+        }
+    }
+
+    // Construction_Zone_StartBuilding: the footprint becomes foundation and the site waits for
+    // its crystals and ore.
+    void StartConstruction(const ObjectTypeInfo& type, BlockPos origin, int dir) {
+        auto z = std::make_unique<ConstructionZone>();
+        z->handle = nextZoneHandle_++;
+        z->type = &type;
+        z->origin = origin;
+        z->dir = dir;
+        z->footprint = BuildingFootprint(type, origin, dir);
+        if (const ObjectStats* st = GetStats().Find(type.name)) {
+            z->crystalsNeeded = int(st->Num("CostCrystal", 0));
+            z->oreNeeded = int(st->Num("CostOre", 0));
+        }
+        for (size_t i = 0; i < z->footprint.size(); ++i) {
+            const BlockPos p = z->footprint[i];
+            world::Block& blk = level_.block(p.x, p.y);
+            blk.flags |= world::BlockFlag::Foundation;
+            if (i + 1 < z->footprint.size() && z->footprint[i + 1] == p) {
+                blk.flags |= world::BlockFlag::BuildingPath;
+                ++i;
+            }
+            level_.UpdateSurface(p.x, p.y);
+        }
+        // TODO(construction): flatten the ground, barriers around the site.
+        RR_INFO("Construction of %s started (needs %d crystals, %d ore)", type.name.c_str(), z->crystalsNeeded,
+                z->oreNeeded);
+        // Construction_Zone_RequestResource: one fetch per crystal and ore of the cost.
+        for (int i = 0; i < z->crystalsNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::PowerCrystal);
+        for (int i = 0; i < z->oreNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::Ore);
+        zones_.push_back(std::move(z));
+    }
+
+    // Construction_UpdateAll: a site with everything delivered becomes the building once nobody
+    // stands on it.
+    void UpdateConstruction() {
+        for (size_t i = 0; i < zones_.size();) {
+            ConstructionZone& z = *zones_[i];
+            if (!z.complete() || UnitsOnFootprint(z)) {
+                ++i;
+                continue;
+            }
+            for (GameObject* r : z.placed) objects_.Remove(*r);
+            for (const BlockPos& p : z.footprint) {
+                level_.block(p.x, p.y).flags &= ~(world::BlockFlag::Foundation | world::BlockFlag::BuildingPath);
+            }
+            GameObject* b = objects_.Create(*z.type);
+            objects_.PlaceBuilding(*b, z.origin, z.dir);
+            tasks_.RemoveZone(z.handle);
+            // TODO(construction): the building teleports down (LegoObject_TeleportDownBuilding).
+            RR_INFO("Construction of %s complete", z.type->name.c_str());
+            zones_.erase(zones_.begin() + std::ptrdiff_t(i));
+        }
+    }
+
+    // A unit at a storage building takes one resource out of stock and carries it away.
+    GameObject* FetchFromStore(GameObject& unit) {
+        int& stock = unit.fetchType == ObjType::PowerCrystal ? crystals_ : ore_;
+        if (stock <= 0) return nullptr;
+        const ObjectTypeInfo* info = GetObjectRegistry().Get(unit.fetchType, 0);
+        if (!info) return nullptr;
+        --stock;
+        return objects_.Spawn(*info, unit.position.x, unit.position.y);
+    }
+
+    // Where loads are put down: the site's path tile if it has one, else its origin.
+    static BlockPos SiteDropBlock(const ConstructionZone& z) {
+        BlockPos b = z.origin;
+        for (size_t i = 0; i + 1 < z.footprint.size(); ++i)
+            if (z.footprint[i] == z.footprint[i + 1]) b = z.footprint[i];
+        return b;
+    }
+
+    // Carriers stand beside the drop block, outside the site, so they never hold up completion.
+    // TODO(construction): verify against the game's request routing (AITask_DoRequest_ObjectType).
+    bool SiteApproach(const ConstructionZone& z, BlockPos& out) const {
+        const BlockPos drop = SiteDropBlock(z);
+        static const int kDx[4] = {0, 1, 0, -1}, kDy[4] = {-1, 0, 1, 0};
+        for (int d = 0; d < 4; ++d) {
+            const BlockPos n{drop.x + kDx[d], drop.y + kDy[d]};
+            if (std::find(z.footprint.begin(), z.footprint.end(), n) != z.footprint.end()) continue;
+            if (!level_.InBounds(n.x, n.y) || !(level_.block(n.x, n.y).flags & world::BlockFlag::Ground)) continue;
+            if (level_.block(n.x, n.y).flags & world::BlockFlag::Building) continue;
+            out = n;
+            return true;
+        }
+        return false;
+    }
+
+    void PlaceOnSite(GameObject& unit, GameObject& item) {
+        for (const auto& z : zones_) {
+            if (z->handle != unit.deliverZone) continue;
+            // The load lands on the site, scattered a little around the drop block's centre.
+            const BlockPos drop = SiteDropBlock(*z);
+            const Vec2 c = level_.map().BlockCentre(drop.x, drop.y);
+            const float spread = level_.map().blockSize() * 0.3f;
+            item.position.x = c.x + random::RandRange(-spread, spread);
+            item.position.y = c.y + random::RandRange(-spread, spread);
+            item.position.z = level_.map().WorldZ(item.position.x, item.position.y);
+            z->placed.push_back(&item);
+            if (item.type == ObjType::PowerCrystal) ++z->crystalsPlaced;
+            else ++z->orePlaced;
+            return;
+        }
+        // TODO(construction): resources for a cancelled site are collected again.
+        tasks_.CreateCollect(item);
+    }
+
+    bool UnitsOnFootprint(const ConstructionZone& z) const {
+        for (const auto& o : objects_.objects()) {
+            if (o->removed || o->hidden || o->type == ObjType::Building || o->carrier) continue;
+            if (o->type != ObjType::MiniFigure && o->type != ObjType::Vehicle && o->type != ObjType::RockMonster) continue;
+            BlockPos b;
+            if (!objects_.BlockOf(*o, b)) continue;
+            for (const BlockPos& p : z.footprint)
+                if (p == b) return true;
+        }
+        return false;
+    }
+
+    // Outline of the footprint under the cursor: green where it can go, red where not.
+    void DrawPlacement(Renderer2D& r2d, const Mat4& viewProj) const {
+        if (!placing_ || placeFootprint_.empty()) return;
+        auto project = [&](const Vec3f& p, float& x, float& y) {
+            const float* m = viewProj.m;
+            const float cx = m[0] * p.x + m[4] * p.y + m[8] * p.z + m[12];
+            const float cy = m[1] * p.x + m[5] * p.y + m[9] * p.z + m[13];
+            const float cw = m[3] * p.x + m[7] * p.y + m[11] * p.z + m[15];
+            if (cw <= 0.0f) return false;
+            x = (cx / cw + 1.0f) * 0.5f * uiWidth_;
+            y = (1.0f - cy / cw) * 0.5f * 480.0f;
+            return true;
+        };
+        const ColorF c = placeValid_ ? ColorF{0, 1, 0, 1} : ColorF{1, 0, 0, 1};
+        for (size_t i = 0; i < placeFootprint_.size(); ++i) {
+            const BlockPos b = placeFootprint_[i];
+            const bool pathTile = i + 1 < placeFootprint_.size() && placeFootprint_[i + 1] == b;
+            const Vec3f corners[4] = {level_.map().PointWorld(b.x, b.y), level_.map().PointWorld(b.x + 1, b.y),
+                                      level_.map().PointWorld(b.x + 1, b.y + 1), level_.map().PointWorld(b.x, b.y + 1)};
+            float sx[4], sy[4];
+            bool ok = true;
+            for (int k = 0; k < 4; ++k) ok &= project(corners[k], sx[k], sy[k]);
+            if (!ok) continue;
+            const ColorF cc = pathTile && placeValid_ ? ColorF{1, 1, 0, 1} : c;
+            for (int k = 0; k < 4; ++k) r2d.DrawLine(sx[k], sy[k], sx[(k + 1) & 3], sy[(k + 1) & 3], cc);
+            if (pathTile) ++i;
+        }
+    }
+
     static MenuType UnitMenu(const GameObject& o) {
         switch (o.type) {
         case ObjType::MiniFigure: return MenuType::LegoMan;
@@ -569,6 +806,7 @@ public:
             }
         }
         ServiceTeleporters();
+        UpdateConstruction();
         tasks_.Update(objects_, level_, elapsed);
         for (const auto& [bx, by] : level_.TakeExposedBlocks())
             for (GameObject* o : objects_.ExposeBlock(bx, by)) {
@@ -653,6 +891,7 @@ public:
         const Mat4 viewProj = proj * viewMat;
         for (size_t i = 0; i < selection_.units().size(); ++i)
             DrawSelectionBox(r2d, viewProj, *selection_.units()[i], i == 0 ? ColorF{0, 1, 0, 1} : ColorF{1, 1, 0, 1});
+        DrawPlacement(r2d, viewProj);
         // Panels slide in real time (Panel_Draw gets the unscaled frame time).
         const uint64_t nowMs = SDL_GetTicks64();
         const float frameElapsed = lastFrameMs_ ? float(nowMs - lastFrameMs_) * 0.025f : 0.0f;
@@ -706,6 +945,14 @@ private:
     int crystals_ = 0, ore_ = 0, crystalQuota_ = 0;
     static constexpr size_t kMaxTeleportQueue = 9;
     std::vector<const ObjectTypeInfo*> teleportQueue_;
+    // Building placement and construction sites.
+    const ObjectTypeInfo* placing_ = nullptr;
+    BlockPos placeOrigin_;
+    int placeDir_ = 0;
+    bool placeValid_ = false;
+    std::vector<BlockPos> placeFootprint_;
+    std::vector<std::unique_ptr<ConstructionZone>> zones_;
+    int nextZoneHandle_ = 1;
     int crystalsPickedUp_ = 0, orePickedUp_ = 0, hiddenObjectsFound_ = 0;
     nerps::Runtime script_;
     std::string message_;

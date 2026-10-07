@@ -39,6 +39,7 @@ bool Game::Initialise(const Config& cfg) {
     iconPanel->Load(cfg, gameName);
     panels = std::make_unique<Panels>();
     panels->Load(cfg, gameName);
+    dependencies.Load(cfg, gameName);
     RR_INFO("Object models loaded in %llu ms", (unsigned long long)(SDL_GetTicks64() - t0));
 
     if (cfg.GetBool(Id("Main", "FrontEnd")) == BoolTri::True) {

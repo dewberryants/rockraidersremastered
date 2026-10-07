@@ -15,6 +15,7 @@
 namespace rr {
 
 class Input;
+struct ObjectTypeInfo;
 
 // Icon menu items (Interface_MenuItemType); ids index the game's item name table.
 enum class MenuItem : int {
@@ -66,6 +67,9 @@ public:
     std::function<bool(MenuItem)> isEnabled;
     // Called when an enabled item is clicked or its shortcut key pressed.
     std::function<void(MenuItem)> onItem;
+    // Build menus list object types instead (InterfaceBuildImages): availability and choice.
+    std::function<bool(const ObjectTypeInfo&)> isBuildEnabled;
+    std::function<void(const ObjectTypeInfo&)> onBuild;
 
     // Returns true if the mouse is over the panel (the world should ignore the click).
     bool HandleInput(const Input& in);
@@ -74,12 +78,29 @@ public:
     const std::string& hoverToolTip() const { return hoverToolTip_; }
 
 private:
+    struct BuildDef {
+        const ObjectTypeInfo* type = nullptr;
+        std::unique_ptr<Image> normal, disabled, pressed;
+        SDL_Scancode key = SDL_SCANCODE_UNKNOWN;
+        std::string toolTip;  // the object's display name (ObjectNames)
+    };
+    // One icon of the current menu: a fixed item or a buildable object type.
+    struct Entry {
+        MenuItem item = MenuItem::Count;
+        const BuildDef* build = nullptr;
+    };
+    std::vector<Entry> Entries() const;
+    const Image* EntryImage(const Entry& e, bool enabled, bool pressed) const;
+    bool EntryEnabled(const Entry& e) const;
+    void Activate(const Entry& e);
+
     const std::vector<MenuItem>& Items(MenuType m) const { return menus_[size_t(m)]; }
     bool HasBackButton(MenuType m) const { return m != MenuType::Main; }
     // Position of icon i of the current menu (stacked downwards from the origin).
     RectF ItemRect(size_t index) const;
 
     std::array<ItemDef, size_t(MenuItem::Count)> items_;
+    std::vector<BuildDef> builds_;
     std::array<std::vector<MenuItem>, size_t(MenuType::Count)> menus_;
     struct Surround {
         std::unique_ptr<Image> image, imageNoBack;

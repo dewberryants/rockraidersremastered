@@ -32,9 +32,24 @@ bool RouteBlocks(const world::Level& level, const GameObject& unit, BlockPos fro
 }
 
 bool IsStorageBuilding(const GameObject& o) {
-    if (o.type != ObjType::Building || !o.stats || o.removed) return false;
+    if (o.type != ObjType::Building || !o.stats || o.removed || o.hidden) return false;
     const uint32_t f1 = o.stats->F1(o.level);
     return (f1 & StatsFlag1::ToolStore) || (f1 & StatsFlag1::StoreObjects);
+}
+
+GameObject* NearestStore(const ObjectList& objects, const GameObject& u) {
+    GameObject* best = nullptr;
+    float bestD = 0.0f;
+    for (const auto& bp : objects.objects()) {
+        if (!IsStorageBuilding(*bp)) continue;
+        const float dx = bp->position.x - u.position.x, dy = bp->position.y - u.position.y;
+        const float d = dx * dx + dy * dy;
+        if (!best || d < bestD) {
+            best = bp.get();
+            bestD = d;
+        }
+    }
+    return best;
 }
 
 }  // namespace
@@ -129,6 +144,19 @@ Task* TaskSystem::CreateCollect(GameObject& object) {
     return t;
 }
 
+Task* TaskSystem::CreateRequest(int zone, ObjType resource) {
+    Task* t = NewTask(tasks_, TaskType::Request, PriorityType::Construction,
+                      priorityValue_[size_t(PriorityType::Construction)]);
+    t->zone = zone;
+    t->resource = resource;
+    return t;
+}
+
+void TaskSystem::RemoveZone(int zone) {
+    for (auto& t : tasks_)
+        if (t->type == TaskType::Request && t->zone == zone) t->remove = true;
+}
+
 Task* TaskSystem::TaskOf(const GameObject& unit) const {
     for (const auto& t : tasks_)
         if (t->assigned == &unit && !t->remove) return t.get();
@@ -164,6 +192,7 @@ bool TaskSystem::CanDo(const Task& t, const GameObject& unit, const world::Level
         return (b.flags & world::BlockFlag::Ground) && !(b.flags & world::BlockFlag::CleanFloor);
     }
     case TaskType::Collect: return t.target && !t.target->removed && !t.target->carrier && !t.target->hidden;
+    case TaskType::Request: return !hasStock || hasStock(t.resource);
     default: return false;
     }
 }
@@ -205,6 +234,18 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         unit.stateTarget = t.target;
         break;
     }
+    case TaskType::Request: {
+        // Off to the nearest storage building to take the resource out.
+        GameObject* store = NearestStore(objects, unit);
+        BlockPos sb;
+        if (!store || !objects.BlockOf(*store, sb)) return false;
+        if (!RouteBlocks(level, unit, from, sb, route) || !objects.RouteBegin(unit, route)) return false;
+        unit.route.back().action = RouteAction::Fetch;
+        unit.stateTarget = store;
+        unit.fetchType = t.resource;
+        unit.deliverZone = t.zone;
+        break;
+    }
     default: return false;
     }
     t.assigned = &unit;
@@ -225,19 +266,21 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
         if (u.removed || u.hidden || u.type != ObjType::MiniFigure) continue;
         if (u.routing || u.state != UnitState::Idle || u.teleportingIn || TaskOf(u)) continue;
         if (u.flags3 & ObjFlag3::Selected) continue;  // TODO(ai): tasks given to selected units
+        if (u.carried && u.deliverZone) {
+            // A resource fetched for a construction site goes there (Construction_Zone_PlaceResource).
+            BlockPos from, to;
+            std::vector<BlockPos> route;
+            if (zoneBlock && zoneBlock(u.deliverZone, to) && objects.BlockOf(u, from) &&
+                RouteBlocks(level, u, from, to, route) && objects.RouteBegin(u, route)) {
+                u.route.back().action = RouteAction::Place;
+            } else {
+                u.deliverZone = 0;  // the site is gone: the load goes back to storage
+            }
+            continue;
+        }
         if (u.carried) {
             // Deliver what it carries to the nearest store (AITask_DoDeposit).
-            GameObject* best = nullptr;
-            float bestD = 0.0f;
-            for (const auto& bp : objects.objects()) {
-                if (!IsStorageBuilding(*bp)) continue;
-                const float dx = bp->position.x - u.position.x, dy = bp->position.y - u.position.y;
-                const float d = dx * dx + dy * dy;
-                if (!best || d < bestD) {
-                    best = bp.get();
-                    bestD = d;
-                }
-            }
+            GameObject* best = NearestStore(objects, u);
             BlockPos from, to;
             std::vector<BlockPos> route;
             if (best && objects.BlockOf(u, from) && objects.BlockOf(*best, to) &&

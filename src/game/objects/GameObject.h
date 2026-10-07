@@ -30,7 +30,7 @@ constexpr uint32_t CanRouteRubble = 0x10000000;  // model has Activity_RouteRubb
 }  // namespace ObjFlag3
 
 // What a unit is busy doing after arriving somewhere.
-enum class UnitState : uint8_t { Idle, Drilling, Clearing, Collecting, Depositing };
+enum class UnitState : uint8_t { Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing };
 
 // A live game object (LegoObject). Grows as the game systems are implemented.
 struct GameObject {
@@ -71,6 +71,8 @@ struct GameObject {
     bool singleWidthDig = false;
     GameObject* carried = nullptr;  // object this unit carries
     GameObject* carrier = nullptr;  // unit carrying this object
+    int deliverZone = 0;                   // construction site the carried resource is for
+    ObjType fetchType = ObjType::None;     // resource to take from storage for deliverZone
     bool teleportingIn = false;            // playing Activity_TeleportIn after arriving
     GameObject* teleportService = nullptr; // teleport building: the unit it is bringing in
 
@@ -136,6 +138,10 @@ public:
     void FinishAction(GameObject& o, bool success);
     // Notified when a unit finished (or gave up) the work its task asked for.
     std::function<void(GameObject&, bool)> onActionDone;
+    // Taking a resource out of storage: returns the object now carried, or null if none is left.
+    std::function<GameObject*(GameObject& unit)> onFetch;
+    // A carried resource put down on its construction site.
+    std::function<void(GameObject& unit, GameObject& item)> onPlace;
     // Notified when a carried object is delivered to a building (resources).
     std::function<void(GameObject& unit, GameObject& delivered, GameObject& building)> onDeposit;
     void Remove(GameObject& o);
@@ -159,11 +165,11 @@ public:
     const std::vector<HiddenObject>& hiddenObjects() const { return hidden_; }
     // Creates the hidden objects standing on a block that has just opened up.
     std::vector<GameObject*> ExposeBlock(int bx, int by);
+    // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
+    void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 
 private:
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
-    // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
-    void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
     void UpdateMovement(GameObject& o, float elapsed);
     void UpdateAction(GameObject& o, float elapsed);
     void BuildRouteCurve(GameObject& o, bool skipCornerNode);

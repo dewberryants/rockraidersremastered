@@ -7,6 +7,7 @@
 #include "core/Log.h"
 #include "core/Random.h"
 #include "fs/Path.h"
+#include "game/Construction.h"
 #include "game/ai/Tasks.h"
 #include "game/world/Level.h"
 #include "gfx/Renderer3D.h"
@@ -250,6 +251,14 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         o.state = UnitState::Depositing;
         o.SetActivity(ActivityType::Deposit);
         break;
+    case RouteAction::Fetch:
+        o.state = UnitState::Fetching;
+        o.SetActivity(ActivityType::Collect);
+        break;
+    case RouteAction::Place:
+        o.state = UnitState::Placing;
+        o.SetActivity(ActivityType::Place);
+        break;
     default: FinishAction(o, true); break;
     }
 }
@@ -331,6 +340,33 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
             } else {
                 FinishAction(o, false);
             }
+        }
+        break;
+    case UnitState::Fetching:
+        if (o.animOverrun > 0.0f) {
+            GameObject* item = onFetch ? onFetch(o) : nullptr;
+            if (item) {
+                o.carried = item;
+                item->carrier = &o;
+            } else {
+                o.deliverZone = 0;
+            }
+            FinishAction(o, item != nullptr);
+        }
+        break;
+    case UnitState::Placing:
+        if (o.animOverrun > 0.0f) {
+            GameObject* item = o.carried;
+            if (item) {
+                o.carried = nullptr;
+                item->carrier = nullptr;
+                // Left on the site where the unit put it down.
+                item->position = {o.position.x + o.faceDir.x * 6.0f, o.position.y + o.faceDir.y * 6.0f, 0.0f};
+                item->position.z = level.map().WorldZ(item->position.x, item->position.y);
+                if (onPlace) onPlace(o, *item);
+            }
+            o.deliverZone = 0;
+            FinishAction(o, item != nullptr);
         }
         break;
     case UnitState::Idle: break;
@@ -571,19 +607,9 @@ void ObjectList::PlaceBuilding(GameObject& o, BlockPos origin, int dir) {
     // TODO(construction): flatten the ground under the footprint (Map3D_FlattenShapeVertices).
     const Vec2 c = level_->map().BlockCentre(origin.x, origin.y);
     SetPositionAndHeading(o, c.x, c.y, float(dir) * kPi * 0.5f);
-    if (!o.info || !o.info->model.activities) return;
-    // SelectPlace_TransformShapePoints: rotate by the direction, then move to the origin.
-    std::vector<BlockPos> blocks;
-    for (const auto& [sx, sy] : o.info->model.activities->shape) {
-        BlockPos p{sx, sy};
-        switch (dir & 3) {
-        case 1: p = {-sy, sx}; break;
-        case 2: p = {-sx, -sy}; break;
-        case 3: p = {sy, -sx}; break;
-        default: break;
-        }
-        blocks.push_back({p.x + origin.x, p.y + origin.y});
-    }
+    if (!o.info) return;
+    RR_DEBUG("%s placed at block %d,%d facing %d", o.info->name.c_str(), origin.x, origin.y, dir);
+    const std::vector<BlockPos> blocks = BuildingFootprint(*o.info, origin, dir);
     // Construction_Zone_CompleteBuilding: a repeated point is the path tile; the rest is the
     // building (walkable for units allowed into tool stores, solid otherwise).
     const bool toolStore = o.stats && (o.stats->F1(o.level) & StatsFlag1::ToolStore);

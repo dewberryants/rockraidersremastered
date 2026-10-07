@@ -2,10 +2,12 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
 #include "config/Config.h"
+#include "game/objects/ObjectTypes.h"
 #include "game/objects/Routing.h"
 
 namespace rr {
@@ -46,6 +48,9 @@ struct Task {
     bool remove = false;
     GameObject* assigned = nullptr;
     bool started = false;
+    // Request: bring a resource of this type from storage to construction site `zone`.
+    ObjType resource = ObjType::None;
+    int zone = 0;
 };
 
 // The pending task list and the per-unit task assignment (AITask_*).
@@ -58,6 +63,13 @@ public:
     Task* CreateDig(const world::Level& level, BlockPos block, bool userRequested);
     Task* CreateClear(BlockPos block);
     Task* CreateCollect(GameObject& object);
+    // AITask_DoRequest_ObjectType: fetch one resource from storage for a construction site.
+    Task* CreateRequest(int zone, ObjType resource);
+    void RemoveZone(int zone);
+
+    // Game hooks: stock left in storage, and where a construction site takes deliveries.
+    std::function<bool(ObjType)> hasStock;
+    std::function<bool(int zone, BlockPos& block)> zoneBlock;
 
     // AITask_UpdateAll: assigns pending tasks to idle units and starts them.
     void Update(ObjectList& objects, world::Level& level, float elapsed);

@@ -5,6 +5,8 @@
 
 #include "core/Log.h"
 #include "fs/Path.h"
+#include "game/objects/ObjectRegistry.h"
+#include "game/objects/Stats.h"
 #include "platform/Input.h"
 
 namespace rr {
@@ -145,7 +147,22 @@ void IconPanel::Load(const Config& cfg, std::string_view gameName, float originX
     set(MenuType::TrainSkill,
         {M::TrainDriver, M::TrainEngineer, M::TrainGeologist, M::TrainPilot, M::TrainSailor, M::TrainDynamite});
     set(MenuType::UpgradeVehicle, {M::UpgradeEngine, M::UpgradeDrill, M::UpgradeScan, M::UpgradeCarry});
-    // TODO(interface): build menus list building/vehicle types (Interface_InitBuildItems).
+
+    // Build icons: "<type> normal:disabled:pressed:key" (Interface_LoadBuildItems).
+    for (Config::ItemRef it = cfg.FindArray(Config::Id(gameName, "InterfaceBuildImages")); it != Config::kNone;
+         it = cfg.Next(it)) {
+        const ObjectTypeInfo* type = GetObjectRegistry().Find(cfg.item(it).key);
+        if (!type || (type->type != ObjType::Building && type->type != ObjType::Vehicle)) continue;
+        const auto f = SplitTokens(cfg.item(it).value, ":");
+        BuildDef d;
+        d.type = type;
+        if (f.size() > 0) d.normal = LoadKeyed(f[0]);
+        if (f.size() > 1) d.disabled = LoadKeyed(f[1]);
+        if (f.size() > 2) d.pressed = LoadKeyed(f[2]);
+        if (f.size() > 3) d.key = KeyFromName(f[3]);
+        d.toolTip = Spaces(cfg.GetString(Config::Id(gameName, "ObjectNames", type->name), type->name));
+        builds_.push_back(std::move(d));
+    }
 }
 
 void IconPanel::OpenMenu(MenuType menu, const BlockPos* block) {
@@ -156,34 +173,97 @@ void IconPanel::OpenMenu(MenuType menu, const BlockPos* block) {
     pressed_ = false;
 }
 
-RectF IconPanel::ItemRect(size_t index) const {
-    float y = originY_;
-    const auto& items = Items(menu_);
-    for (size_t i = 0; i < index && i < items.size(); ++i) {
-        const ItemDef& d = items_[size_t(items[i])];
-        y += d.normal ? float(d.normal->height()) : 40.0f;
+std::vector<IconPanel::Entry> IconPanel::Entries() const {
+    std::vector<Entry> out;
+    if (menu_ == MenuType::BuildBuilding || menu_ == MenuType::BuildSmallVehicle || menu_ == MenuType::BuildLargeVehicle) {
+        // Interface_FUN_0041b2f0: buildings in type order; vehicles split by teleporter class.
+        auto ordered = [&](ObjType t) {
+            std::vector<const BuildDef*> v;
+            for (const BuildDef& d : builds_)
+                if (d.type->type == t) v.push_back(&d);
+            std::sort(v.begin(), v.end(), [](const BuildDef* x, const BuildDef* y) { return x->type->id < y->type->id; });
+            return v;
+        };
+        if (menu_ == MenuType::BuildBuilding) {
+            for (const BuildDef* d : ordered(ObjType::Building)) out.push_back({MenuItem::Count, d});
+        } else {
+            for (const BuildDef* d : ordered(ObjType::Vehicle)) {
+                const ObjectStats* st = GetStats().Find(d->type->name);
+                const uint32_t f2 = st ? st->F2(0) : 0, f3 = st ? st->F3(0) : 0;
+                const bool large = (f2 & StatsFlag2::UseBigTeleporter) || (f3 & StatsFlag3::ClassAsLarge);
+                const bool small = ((f2 & StatsFlag2::UseSmallTeleporter) || (f2 & StatsFlag2::UseWaterTeleporter)) &&
+                                   !(f3 & StatsFlag3::ClassAsLarge);
+                if (menu_ == MenuType::BuildLargeVehicle ? large : small) out.push_back({MenuItem::Count, d});
+            }
+        }
+        return out;
     }
-    const ItemDef& d = items_[size_t(items[index])];
-    const float w = d.normal ? float(d.normal->width()) : 40.0f, h = d.normal ? float(d.normal->height()) : 40.0f;
+    for (MenuItem item : Items(menu_)) out.push_back({item, nullptr});
+    return out;
+}
+
+const Image* IconPanel::EntryImage(const Entry& e, bool enabled, bool pressed) const {
+    const Image *n, *d, *p;
+    if (e.build) {
+        n = e.build->normal.get();
+        d = e.build->disabled.get();
+        p = e.build->pressed.get();
+    } else {
+        const ItemDef& def = items_[size_t(e.item)];
+        n = def.normal.get();
+        d = def.disabled.get();
+        p = def.pressed.get();
+    }
+    const Image* img = !enabled ? d : (pressed ? p : n);
+    return img ? img : n;
+}
+
+bool IconPanel::EntryEnabled(const Entry& e) const {
+    if (e.build) return !isBuildEnabled || isBuildEnabled(*e.build->type);
+    return !isEnabled || isEnabled(e.item);
+}
+
+void IconPanel::Activate(const Entry& e) {
+    if (!EntryEnabled(e)) return;
+    if (e.build) {
+        if (onBuild) onBuild(*e.build->type);
+    } else if (onItem) {
+        onItem(e.item);
+    }
+}
+
+RectF IconPanel::ItemRect(size_t index) const {
+    const auto entries = Entries();
+    float y = originY_;
+    for (size_t i = 0; i < index && i < entries.size(); ++i) {
+        const Image* img = EntryImage(entries[i], true, false);
+        y += img ? float(img->height()) : 40.0f;
+    }
+    const Image* img = index < entries.size() ? EntryImage(entries[index], true, false) : nullptr;
+    const float w = img ? float(img->width()) : 40.0f, h = img ? float(img->height()) : 40.0f;
     return {originX_, y, w, h};
 }
 
 bool IconPanel::HandleInput(const Input& in) {
     const float mx = in.mouseX(), my = in.mouseY();
-    const auto& items = Items(menu_);
+    const auto entries = Entries();
     hover_ = -1;
     hoverToolTip_.clear();
     bool over = false;
-    for (size_t i = 0; i < items.size(); ++i) {
+    for (size_t i = 0; i < entries.size(); ++i) {
         if (!ItemRect(i).Contains(mx, my)) continue;
         hover_ = int(i);
         over = true;
-        const bool enabled = !isEnabled || isEnabled(items[i]);
-        const ItemDef& d = items_[size_t(items[i])];
-        hoverToolTip_ = enabled ? d.toolTip : d.disabledToolTip;
+        const bool enabled = EntryEnabled(entries[i]);
+        if (entries[i].build) {
+            hoverToolTip_ = entries[i].build->toolTip;
+        } else {
+            const ItemDef& d = items_[size_t(entries[i].item)];
+            hoverToolTip_ = enabled ? d.toolTip : d.disabledToolTip;
+        }
     }
     if (HasBackButton(menu_)) {
-        const Surround& s = surrounds_[std::min(items.size(), surrounds_.size() - 1)];
+        const Surround& s = surrounds_[std::min(entries.size(), surrounds_.size() - 1)];
         const RectF back{originX_ + s.noBackX, originY_ + s.noBackY, backX_, backY_};
         if (back.Contains(mx, my)) {
             hover_ = -2;
@@ -199,16 +279,15 @@ bool IconPanel::HandleInput(const Input& in) {
         if (pressed_ && hover_ == -2) {
             BackToMain();
         } else if (pressed_ && hover_ >= 0) {
-            const MenuItem item = items[size_t(hover_)];
-            if ((!isEnabled || isEnabled(item)) && onItem) onItem(item);
+            Activate(entries[size_t(hover_)]);
         }
         pressed_ = false;
     }
-    // Shortcut keys of the current menu's items.
-    for (MenuItem item : Items(menu_)) {
-        const ItemDef& d = items_[size_t(item)];
-        if (d.key != SDL_SCANCODE_UNKNOWN && in.KeyPressed(d.key) && (!isEnabled || isEnabled(item)) && onItem) {
-            onItem(item);
+    // Shortcut keys of the current menu's entries.
+    for (const Entry& e : entries) {
+        const SDL_Scancode key = e.build ? e.build->key : items_[size_t(e.item)].key;
+        if (key != SDL_SCANCODE_UNKNOWN && in.KeyPressed(key) && EntryEnabled(e)) {
+            Activate(e);
             break;
         }
     }
@@ -216,8 +295,8 @@ bool IconPanel::HandleInput(const Input& in) {
 }
 
 void IconPanel::Draw(Renderer2D& r) const {
-    const auto& items = Items(menu_);
-    const Surround& s = surrounds_[std::min(items.size(), surrounds_.size() - 1)];
+    const auto entries = Entries();
+    const Surround& s = surrounds_[std::min(entries.size(), surrounds_.size() - 1)];
     if (!HasBackButton(menu_)) {
         if (s.imageNoBack) s.imageNoBack->Draw(r, originX_ + s.altX, originY_ + s.altY);
     } else {
@@ -225,11 +304,8 @@ void IconPanel::Draw(Renderer2D& r) const {
         const Image* b = hover_ == -2 ? (pressed_ ? backPressed_.get() : backHighlight_.get()) : nullptr;
         if (b) b->Draw(r, originX_ + s.noBackX, originY_ + s.noBackY);
     }
-    for (size_t i = 0; i < items.size(); ++i) {
-        const ItemDef& d = items_[size_t(items[i])];
-        const bool enabled = !isEnabled || isEnabled(items[i]);
-        const Image* img = !enabled ? d.disabled.get() : (pressed_ && hover_ == int(i) ? d.pressed.get() : d.normal.get());
-        if (!img) img = d.normal.get();
+    for (size_t i = 0; i < entries.size(); ++i) {
+        const Image* img = EntryImage(entries[i], EntryEnabled(entries[i]), pressed_ && hover_ == int(i));
         const RectF rc = ItemRect(i);
         if (img) img->Draw(r, rc.x, rc.y);
     }
