@@ -310,6 +310,14 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
     for (auto& t : tasks_) {
         if (t->retryTimer > 0.0f) t->retryTimer -= elapsed;
         if (t->target && t->target->removed) t->remove = true;
+        // A unit that stopped working on its task without finishing it (route abandoned, unit
+        // selected, removed...) gives the task back.
+        if (GameObject* u = t->assigned) {
+            if (u->removed || (!u->routing && u->state == UnitState::Idle && !u->teleportingIn)) {
+                t->assigned = nullptr;
+                t->started = false;
+            }
+        }
     }
     tasks_.erase(std::remove_if(tasks_.begin(), tasks_.end(), [](const auto& t) { return t->remove; }), tasks_.end());
 
