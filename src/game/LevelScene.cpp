@@ -859,8 +859,17 @@ public:
             RR_DEBUG("Event %d object %p block %d,%d", int(m.type), static_cast<void*>(m.object), m.block.x, m.block.y);
         switch (m.type) {
         case MessageType::Select:
-            if (m.object && selection_.Select(*m.object) && m.object->type != ObjType::Building)
-                objects_.RouteEnd(*m.object, false);  // TODO(ai): also drops gather tasks
+            if (m.object && selection_.Select(*m.object)) {
+                GameObject& o = *m.object;
+                if (o.type != ObjType::Building) objects_.RouteEnd(o, false);  // TODO(ai): also drops gather tasks
+                // Message_SelectObject: units answer "yes sir" (vehicles only with a driver).
+                // TODO(vehicles): driven vehicles answer too.
+                int sfx = 0;
+                if ((o.flags3 & ObjFlag3::CanYesSir) &&
+                    !(o.stats && (o.stats->F1(o.level) & StatsFlag1::CanBeDriven)) &&
+                    GetSfx().GetType("SFX_YesSir", sfx))
+                    GetSfx().PlayAt(sfx, Vec3{o.position.x, o.position.y, o.position.z});
+            }
             break;
         case MessageType::ClearSelection:
             selection_.Clear();

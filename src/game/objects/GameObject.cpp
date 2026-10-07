@@ -25,6 +25,26 @@ const Activity* FindAnim(const std::shared_ptr<ActivityModel>& model, ActivityTy
 
 float FrameCount(const Activity* a) { return a && a->scene ? float(a->scene->frameCount()) : 0.0f; }
 
+// Whether frame f was passed going from t0 to t1 (every loop for looping animations).
+bool FramePassed(float f, float t0, float t1, bool loop, float frames) {
+    if (t1 <= t0) return false;
+    if (loop && frames > 0.0f) return std::floor((t1 - f) / frames) > std::floor((t0 - f) / frames);
+    return t0 < f && f <= t1;
+}
+
+void PlaySfxAt(std::string_view name, const Vec3f& at) {
+    int id = 0;
+    if (GetSfx().GetType(name, id)) GetSfx().PlayAt(id, Vec3{at.x, at.y, at.z});
+}
+
+// Put-down sound of a carried object: SFX_PlaceOre, SFX_PlaceCrystal or SFX_Place.
+void PlacedSound(const GameObject& item) {
+    PlaySfxAt(item.type == ObjType::Ore            ? "SFX_PlaceOre"
+              : item.type == ObjType::PowerCrystal ? "SFX_PlaceCrystal"
+                                                   : "SFX_Place",
+              item.position);
+}
+
 // Container_SetAnimationTime: returns how far the time ran past the last frame (0 if not).
 float Overrun(const Activity* a, float time) {
     const float frames = FrameCount(a);
@@ -217,11 +237,20 @@ void ObjectList::Update(float elapsed) {
         if (o.removed) continue;
         o.UpdateActivityChange();
         const Activity* before = o.anim;
-        const float t0 = o.animFresh ? -0.001f : o.animTime;  // a new animation also passes frame 0
+        const bool fresh = o.animFresh;
+        const float t0 = fresh ? -0.001f : o.animTime;  // a new animation also passes frame 0
         o.animFresh = false;
         o.MoveAnimation(elapsed, CalculateSpeeds(o, elapsed).anim);
-        if (o.anim && o.anim == before && o.anim->scene && !o.hidden)
-            PlaySceneSounds(*o.anim->scene, o.anim->looping, t0, o.animTime, o.position);
+        o.triggered = false;
+        if (o.anim && o.anim == before) {
+            const float frames = o.anim->scene ? float(o.anim->scene->frameCount()) : 0.0f;
+            if (o.anim->scene && !o.hidden) PlaySceneSounds(*o.anim->scene, o.anim->looping, t0, o.animTime, o.position);
+            // Container_SetAnimationTime: a new activity plays its SAMPLE once.
+            if (fresh && !o.hidden && !o.anim->sample.empty()) PlaySfxAt(o.anim->sample, o.position);
+            // LegoObject_TriggerFrameCallback: the activity's TRIGGER frame was passed.
+            o.triggered = o.anim->trigger > 0 &&
+                          FramePassed(float(o.anim->trigger), t0, o.animTime, o.anim->looping, frames);
+        }
         if (o.teleportingIn) {
             // Arrived once the beam-in animation has played through.
             if (o.animOverrun > 0.0f) {
@@ -282,14 +311,7 @@ void ObjectList::PlaySceneSounds(const LwsScene& scene, bool loop, float t0, flo
     if (scene.sounds.empty() || t1 <= t0) return;
     const float frames = float(scene.frameCount());
     for (const LwsSound& s : scene.sounds) {
-        const float f = float(s.start);
-        // Passed this tick: between the old and new time, every loop for looping animations.
-        bool passed;
-        if (loop && frames > 0.0f)
-            passed = std::floor((t1 - f) / frames) > std::floor((t0 - f) / frames);
-        else
-            passed = t0 < f && f <= t1;
-        if (!passed) continue;
+        if (!FramePassed(float(s.start), t0, t1, loop, frames)) continue;
         int id = 0;
         // TODO(audio): ranges keep playing until their end frame (Sound3D_StopSound there).
         if (GetSfx().GetType(s.sample, id)) {
@@ -432,6 +454,7 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         }
         break;
     case UnitState::Depositing:
+        if (o.triggered && o.carried && o.activity == ActivityType::Place) PlacedSound(*o.carried);
         if (o.animOverrun > 0.0f) {
             GameObject* building = o.stateTarget;
             if (o.carried && building) {
@@ -459,6 +482,7 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         }
         break;
     case UnitState::Placing:
+        if (o.triggered && o.carried) PlacedSound(*o.carried);
         if (o.animOverrun > 0.0f) {
             GameObject* item = o.carried;
             if (item) {

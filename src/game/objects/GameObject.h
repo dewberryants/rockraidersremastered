@@ -22,6 +22,7 @@ class Level;
 // Object state flags set at creation (LegoObject flags3 in the original numbering).
 namespace ObjFlag3 {
 constexpr uint32_t CanTurn = 0x8;              // model has Activity_TurnLeft
+constexpr uint32_t CanYesSir = 0x80;           // answers when selected (SFX_YesSir)
 constexpr uint32_t Selectable = 0x100;         // cleared by Unselectable stats
 constexpr uint32_t SimpleObject = 0x20000;     // single container (crystals, ore, dynamite...)
 constexpr uint32_t Selected = 0x200000;
@@ -80,6 +81,7 @@ struct GameObject {
     std::vector<ToolType> tools;           // minifigure tool belt, oldest first
     ToolType wantedTool = ToolType::Count; // tool to pick up at the tool store
     int drillSound = -1;                   // play handle of the looping drill sound
+    bool triggered = false;                // the animation passed its TRIGGER frame this tick
     bool crystalDrained = false;           // power crystal used up (UnpoweredCrystalRGB)
     bool powered = false;                  // building: drawing power (or generating it)
     bool powerOff = false;                 // building: switched off by the player
