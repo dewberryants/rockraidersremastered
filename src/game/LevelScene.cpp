@@ -11,6 +11,7 @@
 #include "game/Messages.h"
 #include "core/Random.h"
 #include "game/ai/Tasks.h"
+#include "game/ui/Radar.h"
 #include "game/objects/ObjectRegistry.h"
 #include "game/Pointer.h"
 #include "game/front/FrontEnd.h"
@@ -278,6 +279,11 @@ public:
     void OnPanelButton(PanelButton b) {
         switch (b) {
         case PanelButton::RadarToggle: GetGame().panels->Toggle(PanelType::Radar); break;
+        case PanelButton::RadarMapView: GetGame().panels->radarMapView = true; break;
+        case PanelButton::RadarTaggedObjectView: GetGame().panels->radarMapView = false; break;
+        // TODO(radar): the game steps zoom by the click handler's amount; 1 per click here.
+        case PanelButton::RadarZoomIn: radar_.ZoomIn(1.0f); break;
+        case PanelButton::RadarZoomOut: radar_.ZoomOut(1.0f); break;
         // TODO(camera): the game's zoom steps for the camera control buttons.
         case PanelButton::CameraControlZoomIn: camera_.zoom = std::max(camera_.minZoom, camera_.zoom - 10.0f); break;
         case PanelButton::CameraControlZoomOut: camera_.zoom = std::min(camera_.maxZoom, camera_.zoom + 10.0f); break;
@@ -483,6 +489,14 @@ public:
         const float frameElapsed = lastFrameMs_ ? float(nowMs - lastFrameMs_) * 0.025f : 0.0f;
         lastFrameMs_ = nowMs;
         Game& game = GetGame();
+        // Lego_DrawRadarMap: centred on the tracked unit, else the camera's view point.
+        if (game.panels->radarMapView && game.panels->IsFullyOpen(PanelType::Radar)) {
+            r2d.SetAnchor(Anchor::Left);
+            const GameObject* tracked = selection_.Primary();  // TODO(radar): tracked object, not selection
+            radar_.Draw(r2d, level_, objects_,
+                        tracked ? Vec2{tracked->position.x, tracked->position.y} : Vec2{camera_.x, camera_.y});
+            r2d.SetAnchor(Anchor::Center);
+        }
         game.panels->DrawPanels(r2d, frameElapsed);
         r2d.SetAnchor(Anchor::Right);
         game.iconPanel->Draw(r2d);
@@ -514,6 +528,7 @@ private:
     TaskSystem tasks_;
     std::vector<BlockPos> debugDigs_;
     int crystals_ = 0, ore_ = 0, crystalQuota_ = 0;
+    RadarMap radar_;
     uint64_t lastFrameMs_ = 0;
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;

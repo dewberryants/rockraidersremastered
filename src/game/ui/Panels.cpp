@@ -190,9 +190,10 @@ void Panels::AnchorFor(Renderer2D& r, PanelType t) const {
 }
 
 void Panels::DrawPanels(Renderer2D& r, float elapsed) {
-    // Lego_MainLoop drawing order. TODO(radar): the map view replaces the fill when open.
+    // Lego_MainLoop drawing order; the radar map itself is drawn before this by the level.
     for (PanelType t : {PanelType::RadarFill, PanelType::Radar, PanelType::MessagesSide, PanelType::CameraControl,
                         PanelType::TopPanel}) {
+        if (t == PanelType::RadarFill && radarMapView) continue;
         AnchorFor(r, t);
         DrawPanel(r, t, elapsed);
     }

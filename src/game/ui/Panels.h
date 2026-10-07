@@ -43,6 +43,13 @@ public:
 
     void Toggle(PanelType p);
     bool IsOpen(PanelType p) const { return panels_[size_t(p)].open; }
+    // Open and done sliding (Panel_IsFullyOpen).
+    bool IsFullyOpen(PanelType p) const {
+        const Panel& q = panels_[size_t(p)];
+        return q.open && q.x == q.openX && q.y == q.openY;
+    }
+    // Radar shows the map (true) or the tagged-object view; the fill only covers the latter.
+    bool radarMapView = false;
 
     // Hover/press state and clicks; returns true if the mouse is over a panel.
     bool HandleInput(const Input& in);
