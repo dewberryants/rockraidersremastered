@@ -11,6 +11,7 @@
 #include "game/Construction.h"
 #include "game/Messages.h"
 #include "game/PowerGrid.h"
+#include "game/Sfx.h"
 #include "core/Random.h"
 #include "game/ai/Tasks.h"
 #include "game/nerps/Nerps.h"
@@ -50,6 +51,7 @@ public:
         if (!textures_.Load(cfg.GetString(Config::Id(game.gameName, set, "texturebasename"), ""), tw, th))
             RR_WARN("Texture set %s not loaded", set.c_str());
 
+        game.rockFalls.SetStyle(cfg.GetString(Config::Id(game.gameName, levelId_, "RockFallStyle"), ""));
         LoadObjects(cfg);
         level_.TakeExposedBlocks();  // blocks opened while loading the level are not news
         level_.TakeCavernsDiscovered();
@@ -143,6 +145,8 @@ public:
             return cfg.GetRGB(game.Id("Main", key), r, g, b) ? Vec3f{r, g, b} : fallback;
         };
         ambient_ = rgb("AmbientRGB", {0.04f, 0.04f, 0.04f});
+        objects_.crystalColour = rgb("PowerCrystalRGB", {0.0f, 1.0f, 0.0f});
+        objects_.drainedCrystalColour = rgb("UnpoweredCrystalRGB", {1.0f, 0.0f, 1.0f});
         topSpot_ = rgb("TopSpotRGB", {0.5f, 0.5f, 0.5f});
         clipDist_ = cfg.GetFloat(game.Id("Main", "TVClipDist")).value_or(800.0f);
         if (auto v = cfg.GetFloat(game.Id("Main", "MinDist"))) camera_.minZoom = *v;
@@ -174,6 +178,12 @@ public:
         }
     }
 
+    // Direct3D Retained Mode default field of view: tan(half horizontal angle) = 0.5.
+    Mat4 ViewProjection(const world::TopDownCamera::View& view, float aspect) const {
+        const float fovY = 2.0f * std::atan(0.5f / aspect);
+        return Mat4::Perspective(fovY, aspect, 1.0f, clipDist_) * LookDirLH(view.eye, view.forward, view.up);
+    }
+
     // Ray from a logical screen position into the 3D view.
     void MouseRay(float lx, float ly, Vec3f& origin, Vec3f& dir) const {
         const world::TopDownCamera::View view = camera_.Compute(&level_.map());
@@ -186,23 +196,56 @@ public:
         dir = Normalize(f + s * (ndcX * tanX) + u * (ndcY * tanY));
     }
 
-    // Marches a ray until it passes below the terrain surface (+Z points down).
-    bool PickGround(const Vec3f& origin, const Vec3f& dir, Vec3f& hit) const {
+    // Map3D_GetIntersections: the block under a screen position. A rough hit first (the ray
+    // against a level plane, re-levelled 20 times to the terrain height under the last hit), then
+    // the first of the 5x5 blocks around it, row by row, whose corners projected onto the screen
+    // enclose the position.
+    bool PickBlock(float lx, float ly, BlockPos& out) const {
+        Vec3f origin, dir;
+        MouseRay(lx, ly, origin, dir);
         const world::Map3D& map = level_.map();
-        auto below = [&](float t) {
-            const Vec3f p = origin + dir * t;
-            return p.z >= map.WorldZ(p.x, p.y);
-        };
-        constexpr float kStep = 2.0f;
-        for (float t = kStep; t < clipDist_; t += kStep) {
-            if (!below(t)) continue;
-            float lo = t - kStep, hi = t;
-            for (int i = 0; i < 12; ++i) {
-                const float mid = (lo + hi) * 0.5f;
-                (below(mid) ? hi : lo) = mid;
-            }
-            hit = origin + dir * hi;
+        if (std::fabs(dir.z) < 1e-6f) return false;
+        Vec3f p = origin;
+        float planeZ = -50.0f;
+        for (int i = 0; i < 20; ++i) {
+            p = origin + dir * ((planeZ - origin.z) / dir.z);
+            planeZ = map.WorldZ(p.x, p.y);
+        }
+        BlockPos rough;
+        if (!map.WorldToBlock(p.x, p.y, rough.x, rough.y)) return false;
+
+        const Mat4 vp = ViewProjection(camera_.Compute(&map), viewAspect_);
+        auto project = [&](const Vec3f& v, float& sx, float& sy) {
+            const float* m = vp.m;
+            const float cx = m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12];
+            const float cy = m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13];
+            const float cw = m[3] * v.x + m[7] * v.y + m[11] * v.z + m[15];
+            if (cw <= 1e-4f) return false;
+            sx = (cx / cw + 1.0f) * 0.5f * uiWidth_;
+            sy = (1.0f - cy / cw) * 0.5f * 480.0f;
             return true;
+        };
+        for (int dy = -2; dy <= 2; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                const int bx = rough.x + dx, by = rough.y + dy;
+                if (!map.InBlocks(bx, by)) continue;
+                const world::Map3D::Quad& q = map.quad(bx, by);
+                float px[4], py[4];
+                bool front = true;
+                for (int i = 0; i < 4 && front; ++i) front = project(q.pos[i], px[i], py[i]);
+                if (!front) continue;
+                // Maths_PointInsidePoly: even-odd crossings.
+                bool inside = false;
+                for (int i = 0, j = 3; i < 4; j = i++) {
+                    if ((py[i] > ly) != (py[j] > ly) &&
+                        lx < (px[j] - px[i]) * (ly - py[i]) / (py[j] - py[i]) + px[i])
+                        inside = !inside;
+                }
+                if (inside) {
+                    out = {bx, by};
+                    return true;
+                }
+            }
         }
         return false;
     }
@@ -226,17 +269,15 @@ public:
         }
         Vec3f origin, dir;
         MouseRay(in.mouseX(), in.mouseY(), origin, dir);
-        if (GameObject* o = objects_.PickObject(origin, dir)) {
-            if (Selection::IsSelectable(*o)) {
-                messages_.Post(MessageType::ClearSelection);
-                messages_.Post(MessageType::Select, o);
-                panel.OpenMenu(UnitMenu(*o));
-            }
+        // Objects that can't be selected (crystals, ore...) don't take the click from the block behind.
+        if (GameObject* o = objects_.PickObject(origin, dir, &Selection::IsSelectable)) {
+            messages_.Post(MessageType::ClearSelection);
+            messages_.Post(MessageType::Select, o);
+            panel.OpenMenu(UnitMenu(*o));
             return;
         }
-        Vec3f hit;
         BlockPos b;
-        if (!PickGround(origin, dir, hit) || !level_.map().WorldToBlock(hit.x, hit.y, b.x, b.y)) return;
+        if (!PickBlock(in.mouseX(), in.mouseY(), b)) return;
         const world::Block& blk = level_.block(b.x, b.y);
         if (!selection_.empty() && (blk.flags & world::BlockFlag::Ground)) {
             messages_.Post(MessageType::UserGoto, nullptr, 0, &b);
@@ -251,6 +292,32 @@ public:
             const bool rubble = !(blk.flags & world::BlockFlag::CleanFloor);
             panel.OpenMenu(rubble ? MenuType::Rubble : MenuType::Ground, &b);
         }
+    }
+
+    // Lego_PTL_RockFall: the collapse scene over a block (or a block corner point), facing the
+    // wall's direction. A wall open on two or more sides comes down as an outside corner.
+    void SpawnRockFall(BlockPos b, int direction, bool atPoint) {
+        const world::Map3D& map = level_.map();
+        static const int kNX[4] = {1, 0, -1, 0}, kNY[4] = {0, 1, 0, -1};
+        int open = 0;
+        for (int i = 0; i < 4; ++i)
+            if (level_.InBounds(b.x + kNX[i], b.y + kNY[i]) &&
+                (level_.block(b.x + kNX[i], b.y + kNY[i]).flags & world::BlockFlag::Ground))
+                ++open;
+        Vec2 c = map.BlockCentre(b.x, b.y);
+        if (atPoint) {
+            const Vec3f p = map.PointWorld(b.x, b.y);
+            c = {p.x, p.y};
+        }
+        const Vec3f pos{c.x, c.y, map.WorldZ(c.x, c.y)};
+        int sfx = 0;
+        if (GetSfx().GetType("SFX_RockBreak", sfx)) GetSfx().PlayAt(sfx, Vec3{pos.x, pos.y, pos.z});
+        static const Vec2 kDir[4] = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};
+        const auto type = open > 1 ? RockFallEffects::OutsideCorner : RockFallEffects::ThreeSides;
+        // As in the original, a fall that finds no free instance never completes (the block's
+        // crystals and ore are not released).
+        if (GetGame().rockFalls.Spawn(type, b, pos, kDir[direction & 3]))
+            level_.block(b.x, b.y).flags |= world::BlockFlag::RockFallFX;
     }
 
     // Level_GenerateCrystal / Level_GenerateOre: a resource at a random spot inside the block,
@@ -379,7 +446,8 @@ public:
                 // Level_DestroyWall: the floor is left full of rubble with clearing queued, and
                 // DigComplete starts the level's event chain (rock fall, crystals, ore).
                 b.flags &= ~world::BlockFlag::DigRequested;
-                messages_.Post(MessageType::DigComplete, nullptr, 0, &t->block);
+                b.flags |= world::BlockFlag::RockFallFX;
+                messages_.Post(MessageType::DigComplete, nullptr, b.brokenDirection, &t->block);
                 // TODO(ai): the game queues one clear request per rubble layer (four).
                 tasks_.CreateClear(t->block);
             } else if (t->type == TaskType::Clear && (b.flags & world::BlockFlag::CleanFloor)) {
@@ -553,10 +621,8 @@ public:
     void UpdatePlacement(Input& in) {
         placeValid_ = false;
         placeFootprint_.clear();
-        Vec3f origin, dir, hit;
-        MouseRay(in.mouseX(), in.mouseY(), origin, dir);
         BlockPos b;
-        if (PickGround(origin, dir, hit) && level_.map().WorldToBlock(hit.x, hit.y, b.x, b.y)) {
+        if (PickBlock(in.mouseX(), in.mouseY(), b)) {
             placeDir_ = PlacementDirection();
             placeOrigin_ = b;
             placeFootprint_ = BuildingFootprint(*placing_, b, placeDir_);
@@ -802,10 +868,7 @@ public:
             break;
         // Events a level's PTL table chains together: drilling causes a rock fall, the fall
         // releases the block's crystals and ore, cleared rubble may hold ore.
-        case MessageType::RockFall:
-            // TODO(effects): the rock fall animation (Effect_Spawn_RockFall) runs before completing.
-            messages_.Post(MessageType::RockFallComplete, m.object, m.arg, &m.block);
-            break;
+        case MessageType::RockFall: SpawnRockFall(m.block, int(m.arg & 0xffff), (m.arg >> 16) != 0); break;
         case MessageType::GenerateFromCryOre: GenerateFromCryOre(m.block); break;
         case MessageType::GenerateCrystal: GenerateResource(m.block, ObjType::PowerCrystal, true); break;
         case MessageType::GenerateOre: GenerateResource(m.block, ObjType::Ore, true); break;
@@ -933,6 +996,14 @@ public:
         for (const world::Level::SeamYield& y : level_.TakeSeamYields())
             GenerateResource({y.x, y.y}, y.crystal ? ObjType::PowerCrystal : ObjType::Ore, true);
         objects_.Update(elapsed);
+        // Level_UpdateEffects: finished rock falls release the block (RockFallComplete).
+        rockFallsDone_.clear();
+        GetGame().rockFalls.Update(elapsed, rockFallsDone_);
+        for (BlockPos b : rockFallsDone_) {
+            world::Block& blk = level_.block(b.x, b.y);
+            if (!(blk.flags & 0x1000)) messages_.Post(MessageType::RockFallComplete, nullptr, 0, &b);
+            blk.flags &= ~(world::BlockFlag::RockFallFX | 0x1000u | 0x8000000u);
+        }
         if (script_.loaded() && levelStatus_ == 0) {
             script_.UpdateTimers(elapsed);
             script_.Execute();
@@ -965,7 +1036,7 @@ public:
         viewAspect_ = aspect;
         uiWidth_ = r2d.uiWidth();
         const float fovY = 2.0f * std::atan(0.5f / aspect);
-        const Mat4 proj = Mat4::Perspective(fovY, aspect, 1.0f, clipDist_);
+        const Mat4 proj = Mat4::Perspective(fovY, aspect, 1.0f, clipDist_);  // as in ViewProjection
         const Mat4 viewMat = LookDirLH(view.eye, view.forward, view.up);
         renderer_.BeginFrame(vx, vy, vw, vh, viewMat, proj, view.eye);
 
@@ -1000,6 +1071,7 @@ public:
         DrawTerrain();
         static const bool hideObjects = std::getenv("RR_DEBUG_NOOBJ") != nullptr;  // pixel-diff checks
         if (!hideObjects) objects_.Draw(renderer_);
+        GetGame().rockFalls.Draw(renderer_);
         renderer_.EndFrame();
 
         r2d.SetAnchor(Anchor::Center);
@@ -1081,6 +1153,7 @@ private:
     Vec3f ambient_, topSpot_;
     float clipDist_ = 800.0f;
     float viewAspect_ = 4.0f / 3.0f, uiWidth_ = 640.0f;
+    std::vector<BlockPos> rockFallsDone_;
     bool failed_ = false;
 };
 

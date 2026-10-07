@@ -307,6 +307,7 @@ bool Level::DestroyWall(int x, int y, bool hiddenCavern) {
             }
         }
     }
+    b.brokenDirection = b.direction;
     b.flags |= BlockFlag::Ground;
     b.flags &= ~BlockFlag::Reinforced;
     b.flags |= 0x400000;

@@ -26,14 +26,14 @@ uint32_t PackColour(const Vec3f& c, float alpha) {
 }
 }  // namespace
 
-void DrawMesh(Renderer3D& r, const Mesh& mesh, const Mat4& world, float dissolve) {
+void DrawMesh(Renderer3D& r, const Mesh& mesh, const Mat4& world, float dissolve, const Vec3f* tint) {
     static std::vector<Vertex3D> tris;
     for (const MeshGroup& g : mesh.groups) {
         const MeshMaterial& mat = g.material;
-        const float alpha = mat.alpha * (1.0f - dissolve);
+        const float alpha = (tint ? 1.0f : mat.alpha) * (1.0f - dissolve);
         if (alpha <= 0.0f) continue;
-        // Diffuse plus self-illumination, as a vertex colour multiplier.
-        const uint32_t colour = PackColour(mat.diffuse + mat.emissive, alpha);
+        const uint32_t colour = PackColour(tint ? *tint : mat.diffuse, alpha);
+        const uint32_t emissive = PackColour(tint ? *tint : mat.emissive, 0.0f);
         tris.clear();
         tris.reserve(g.indices.size());
         for (uint32_t idx : g.indices) {
@@ -41,6 +41,7 @@ void DrawMesh(Renderer3D& r, const Mesh& mesh, const Mat4& world, float dissolve
             v.pos = world.TransformPoint(v.pos);
             v.normal = Normalize(world.TransformDir(v.normal));
             v.colour = colour;
+            v.emissive = emissive;
             tris.push_back(v);
         }
         static const bool debugNoTex = std::getenv("RR_DEBUG_NOTEX") != nullptr;
@@ -51,11 +52,11 @@ void DrawMesh(Renderer3D& r, const Mesh& mesh, const Mat4& world, float dissolve
     }
 }
 
-void DrawPose(Renderer3D& r, const LwsScene& scene, const LwsPose& pose, const Mat4& object) {
+void DrawPose(Renderer3D& r, const LwsScene& scene, const LwsPose& pose, const Mat4& object, const Vec3f* tint) {
     for (size_t i = 0; i < scene.nodes.size() && i < pose.world.size(); ++i) {
         const LwsNode& node = scene.nodes[i];
         if (!node.mesh || node.unseenByCamera) continue;
-        DrawMesh(r, *node.mesh, object * pose.world[i], pose.dissolve[i]);
+        DrawMesh(r, *node.mesh, object * pose.world[i], pose.dissolve[i], tint);
     }
 }
 

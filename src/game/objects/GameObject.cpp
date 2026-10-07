@@ -76,7 +76,8 @@ void GameObject::EquipTool(ToolType t) {
 
 void GameObject::Face(Vec2 dir) {
     if (dir.x == 0.0f && dir.y == 0.0f) return;
-    faceDir = dir;
+    const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+    faceDir = {dir.x / len, dir.y / len};
     heading = std::atan2(dir.x, dir.y);
 }
 
@@ -134,12 +135,12 @@ Vec3f ObjectList::PickCentre(const GameObject& o) const {
     return {o.position.x, o.position.y, ground - height * 0.5f};
 }
 
-GameObject* ObjectList::PickObject(const Vec3f& origin, const Vec3f& dir) const {
+GameObject* ObjectList::PickObject(const Vec3f& origin, const Vec3f& dir, bool (*accept)(const GameObject&)) const {
     GameObject* best = nullptr;
     float bestT = 0.0f;
     for (const auto& op : objects_) {
         GameObject& o = *op;
-        if (o.removed || o.hidden || !o.stats) continue;
+        if (o.removed || o.hidden || !o.stats || (accept && !accept(o))) continue;
         const float radius = o.stats->Num("PickSphere", o.level);
         if (radius <= 0.0f) continue;
         // TODO(buildings): one sphere per block of the building's shape.
@@ -239,15 +240,41 @@ void ObjectList::Update(float elapsed) {
             o.SetActivity(ActivityType::CarryStand);
         }
     }
-    // Carried objects ride in front of their carrier.
-    // TODO(carry): attach to the carrier's carry null instead of a fixed offset.
+    // LegoObject_UpdateCarrying: carried objects sit on their carrier's carry null.
     for (auto& op : objects_) {
         GameObject& o = *op;
         if (!o.carrier) continue;
         const GameObject& c = *o.carrier;
-        o.position = {c.position.x + c.faceDir.x * 4.0f, c.position.y + c.faceDir.y * 4.0f, c.position.z - 8.0f};
-        o.heading = c.heading;
+        Vec2 dir;
+        if (CarryPoint(c, o.position, dir)) {
+            o.heading = std::atan2(dir.x, dir.y);
+        } else {
+            o.position = {c.position.x + c.faceDir.x * 4.0f, c.position.y + c.faceDir.y * 4.0f, c.position.z - 8.0f};
+            o.heading = c.heading;
+        }
     }
+}
+
+bool ObjectList::CarryPoint(const GameObject& c, Vec3f& pos, Vec2& dir) const {
+    const ObjectModel* m = c.info ? &c.info->model : nullptr;
+    if (!m || !m->activities || m->activities->carryNull.empty() || !c.anim || !c.anim->scene) return false;
+    const LwsScene& scene = *c.anim->scene;
+    size_t node = scene.nodes.size();
+    for (size_t i = 0; i < scene.nodes.size(); ++i)
+        if (EqualsNoCase(scene.nodes[i].name, m->activities->carryNull)) {
+            node = i;
+            break;
+        }
+    if (node == scene.nodes.size()) return false;
+    static LwsPose pose;
+    EvaluateLws(scene, c.animTime, c.anim->looping, pose);
+    if (node >= pose.world.size()) return false;
+    const Mat4 w = ObjectMatrix(c.position, c.heading, m->activities->scale) * pose.world[node];
+    pos = w.TransformPoint({0, 0, 0});
+    // The carried object is oriented along the null.
+    const Vec3f fwd = w.TransformDir({0, 0, 1});
+    dir = (fwd.x != 0.0f || fwd.y != 0.0f) ? Vec2{fwd.x, fwd.y} : c.faceDir;
+    return true;
 }
 
 void ObjectList::PlaySceneSounds(const LwsScene& scene, bool loop, float t0, float t1, const Vec3f& at) {
@@ -651,6 +678,8 @@ void ObjectList::Draw(Renderer3D& r) const {
         const GameObject& o = *op;
         if (o.removed || o.hidden || !o.info) continue;
         const ObjectModel& m = o.info->model;
+        const Vec3f* tint = nullptr;
+        if (o.type == ObjType::PowerCrystal) tint = o.crystalDrained ? &drainedCrystalColour : &crystalColour;
         if (m.activities) {
             const Mat4 world = ObjectMatrix(o.position, o.heading, m.activities->scale);
             if (o.anim) {
@@ -663,9 +692,9 @@ void ObjectList::Draw(Renderer3D& r) const {
             }
         } else if (m.scene) {
             EvaluateLws(*m.scene, o.animTime, true, pose);
-            DrawPose(r, *m.scene, pose, ObjectMatrix(o.position, o.heading + o.spin));
+            DrawPose(r, *m.scene, pose, ObjectMatrix(o.position, o.heading + o.spin), tint);
         } else if (m.mesh) {
-            DrawMesh(r, *m.mesh, ObjectMatrix(o.position, o.heading + o.spin));
+            DrawMesh(r, *m.mesh, ObjectMatrix(o.position, o.heading + o.spin), 0.0f, tint);
         }
     }
 }

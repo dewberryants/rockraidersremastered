@@ -32,7 +32,8 @@ struct Vertex3D {
     Vec3f pos;
     Vec3f normal;
     Vec2 uv;
-    uint32_t colour = 0xFFFFFFFF;  // RGBA8 multiplier (highlights, vertex colours)
+    uint32_t colour = 0xFFFFFFFF;  // RGBA8 diffuse multiplier (highlights, vertex colours) and alpha
+    uint32_t emissive = 0;         // RGB8 self-illumination, added to the lighting
 };
 
 struct Light {

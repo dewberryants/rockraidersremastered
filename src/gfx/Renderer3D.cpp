@@ -81,16 +81,19 @@ layout(location = 0) in vec3 aPos;
 layout(location = 1) in vec3 aNormal;
 layout(location = 2) in vec2 aUv;
 layout(location = 3) in vec4 aColour;
+layout(location = 4) in vec4 aEmissive;
 uniform mat4 uViewProj;
 out vec3 vWorld;
 out vec3 vNormal;
 out vec2 vUv;
 out vec4 vColour;
+out vec3 vEmissive;
 void main() {
     vWorld = aPos;
     vNormal = aNormal;
     vUv = aUv;
     vColour = aColour;
+    vEmissive = aEmissive.rgb;
     gl_Position = uViewProj * vec4(aPos, 1.0);
 }
 )";
@@ -102,6 +105,7 @@ in vec3 vWorld;
 in vec3 vNormal;
 in vec2 vUv;
 in vec4 vColour;
+in vec3 vEmissive;
 uniform sampler2D uTex;
 uniform int uLightCount;
 uniform int uLightType[8];
@@ -117,7 +121,6 @@ out vec4 oColour;
 void main() {
     vec4 tex = texture(uTex, vUv);
     if (tex.a < 0.5) discard;  // colour-keyed texel
-    tex *= vColour;
     vec3 n = normalize(vNormal);
     vec3 light = vec3(0.0);
     for (int i = 0; i < uLightCount; ++i) {
@@ -138,13 +141,13 @@ void main() {
         }
         light += uLightColour[i] * max(dot(n, L), 0.0) * atten;
     }
-    vec3 colour = tex.rgb * min(light, vec3(1.0));
+    vec3 colour = tex.rgb * min(vColour.rgb * light + vEmissive, vec3(1.0));
     if (uFog != 0) {
         float d = length(vWorld - uCameraPos) * uFogDensity;
         float f = exp(-d * d);
         colour = mix(uFogColour, colour, clamp(f, 0.0, 1.0));
     }
-    oColour = vec4(colour, tex.a);
+    oColour = vec4(colour, tex.a * vColour.a);
 }
 )";
 }  // namespace
@@ -166,6 +169,9 @@ bool Renderer3D::Init() {
     glEnableVertexAttribArray(3);
     glVertexAttribPointer(3, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex3D),
                           reinterpret_cast<void*>(offsetof(Vertex3D, colour)));
+    glEnableVertexAttribArray(4);
+    glVertexAttribPointer(4, 4, GL_UNSIGNED_BYTE, GL_TRUE, sizeof(Vertex3D),
+                          reinterpret_cast<void*>(offsetof(Vertex3D, emissive)));
     glBindVertexArray(0);
     const uint8_t white[4] = {255, 255, 255, 255};
     glGenTextures(1, &white_);

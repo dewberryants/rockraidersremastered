@@ -6,6 +6,7 @@
 #include "config/Config.h"
 #include "gfx/Font.h"
 #include "game/Construction.h"
+#include "game/Effects.h"
 #include "game/ui/Interface.h"
 #include "game/ui/Panels.h"
 
@@ -32,6 +33,7 @@ struct Game {
     std::unique_ptr<IconPanel> iconPanel;  // in-game icon menus (Interface_Initialise(565, 18))
     std::unique_ptr<Panels> panels;        // HUD panels (Lego_LoadPanels, Lego_LoadPanelButtons)
     Dependencies dependencies;             // build requirements (Dependencies_Initialise)
+    RockFallEffects rockFalls;             // wall collapse scenes (Effect_Load_RockFallStylesAll)
 
     bool introsDone = false;
     std::string selectedLevel;  // "Levels::Tutorial01" when a level was chosen

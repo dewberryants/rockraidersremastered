@@ -27,6 +27,7 @@ constexpr uint32_t Building = 0x400;        // solid part of a building: units r
 constexpr uint32_t OuterCorner = 0x40;
 constexpr uint32_t InnerCorner = 0x80;
 constexpr uint32_t LavaSettled = 0x200;     // erosion finished: cooled lava texture
+constexpr uint32_t RockFallFX = 0x800;      // a rock fall scene is playing over the block
 constexpr uint32_t Diagonal = 0x2000;       // two opposite corners dug ("V" wall)
 constexpr uint32_t HiddenCavern = 0x20000;  // predug cavern not yet discovered
 constexpr uint32_t BuildingPath = 0x8000;   // walkable part of a building (path tile, tool store)
@@ -55,6 +56,7 @@ struct Block {
     uint8_t texture = 0;
     Terrain terrain = Terrain::Tunnel;
     uint8_t direction = 0;
+    uint8_t brokenDirection = 0;  // direction of the wall as it came down (DigComplete argument)
     uint8_t erodeStage = 0;  // 4 = lava
     uint32_t flags = 0;
     uint32_t flags2 = 0;

@@ -80,6 +80,7 @@ struct GameObject {
     std::vector<ToolType> tools;           // minifigure tool belt, oldest first
     ToolType wantedTool = ToolType::Count; // tool to pick up at the tool store
     int drillSound = -1;                   // play handle of the looping drill sound
+    bool crystalDrained = false;           // power crystal used up (UnpoweredCrystalRGB)
     bool powered = false;                  // building: drawing power (or generating it)
     bool powerOff = false;                 // building: switched off by the player
     GameObject* teleportService = nullptr; // teleport building: the unit it is bringing in
@@ -160,8 +161,12 @@ public:
     void Remove(GameObject& o);
     // Pick sphere centre: half the collision height above the ground under the object.
     Vec3f PickCentre(const GameObject& o) const;
-    // Nearest object whose pick sphere the ray passes through (LegoObject_DoPickSphereSelection).
-    GameObject* PickObject(const Vec3f& origin, const Vec3f& dir) const;
+    // Nearest object whose pick sphere the ray passes through (LegoObject_DoPickSphereSelection);
+    // with a filter, only objects it accepts.
+    GameObject* PickObject(const Vec3f& origin, const Vec3f& dir, bool (*accept)(const GameObject&) = nullptr) const;
+    // LegoObject_SetCrystalPoweredColour: power crystals are drawn in one of these colours
+    // (Lego.cfg PowerCrystalRGB / UnpoweredCrystalRGB).
+    Vec3f crystalColour{0.0f, 1.0f, 0.0f}, drainedCrystalColour{1.0f, 0.0f, 1.0f};
     void Update(float elapsed);
     void Draw(Renderer3D& r) const;
     void Clear();
@@ -186,6 +191,7 @@ private:
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);
     void UpdateAction(GameObject& o, float elapsed);
+    bool CarryPoint(const GameObject& carrier, Vec3f& pos, Vec2& dir) const;
     void BuildRouteCurve(GameObject& o, bool skipCornerNode);
 
     world::Level* level_ = nullptr;
