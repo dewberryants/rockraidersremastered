@@ -115,8 +115,9 @@ uniform float uFogDensity;
 uniform vec3 uCameraPos;
 out vec4 oColour;
 void main() {
-    vec4 tex = texture(uTex, vUv) * vColour;
-    if (tex.a < 0.5) discard;
+    vec4 tex = texture(uTex, vUv);
+    if (tex.a < 0.5) discard;  // colour-keyed texel
+    tex *= vColour;
     vec3 n = normalize(vNormal);
     vec3 light = vec3(0.0);
     for (int i = 0; i < uLightCount; ++i) {
@@ -195,15 +196,15 @@ void Renderer3D::BeginFrame(int viewX, int viewY, int viewW, int viewH, const Ma
     for (auto& b : batches_) b.verts.clear();
 }
 
-void Renderer3D::DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, bool transparent) {
+void Renderer3D::DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, Blend blend) {
     // Reuse a batch with the same state (batches persist across frames to keep their allocations).
     for (auto& b : batches_) {
-        if (b.texture == texture && b.transparent == transparent) {
+        if (b.texture == texture && b.blend == blend) {
             b.verts.insert(b.verts.end(), verts, verts + count);
             return;
         }
     }
-    batches_.push_back({texture, transparent, std::vector<Vertex3D>(verts, verts + count)});
+    batches_.push_back({texture, blend, std::vector<Vertex3D>(verts, verts + count)});
 }
 
 void Renderer3D::EndFrame() {
@@ -246,14 +247,17 @@ void Renderer3D::EndFrame() {
     glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(vao_);
     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-    for (int pass = 0; pass < 2; ++pass) {
+    const Blend passes[] = {Blend::Opaque, Blend::Alpha, Blend::Additive};
+    for (Blend pass : passes) {
+        if (pass == Blend::Alpha) {
+            glEnable(GL_BLEND);
+            glDepthMask(GL_FALSE);
+            glUniform1i(glGetUniformLocation(program_, "uFog"), 0);
+        }
+        if (pass != Blend::Opaque)
+            glBlendFunc(GL_SRC_ALPHA, pass == Blend::Additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
         for (auto& b : batches_) {
-            if (b.verts.empty() || b.transparent != (pass == 1)) continue;
-            if (pass == 1) {
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glDepthMask(GL_FALSE);
-            }
+            if (b.verts.empty() || b.blend != pass) continue;
             glBindTexture(GL_TEXTURE_2D, b.texture ? b.texture->id() : white_);
             glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(b.verts.size() * sizeof(Vertex3D)), b.verts.data(), GL_STREAM_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, GLsizei(b.verts.size()));

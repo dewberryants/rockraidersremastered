@@ -52,6 +52,10 @@ struct FogSettings {
 
 // Forward renderer for world geometry. Draw calls are queued per frame and grouped by texture.
 // World space is the game's left-handed space (X east, Y north, Z down).
+// How a batch is blended (Mesh_SetRenderDesc). Opaque draws first; the alpha passes follow with
+// depth writes and fog off: Alpha is (SRCALPHA, INVSRCALPHA), Additive is (SRCALPHA, ONE).
+enum class Blend { Opaque, Alpha, Additive };
+
 class Renderer3D {
 public:
     bool Init();
@@ -64,13 +68,13 @@ public:
     void SetClearColour(const Vec3f& c) { clear_ = c; }
 
     // Queues triangles (3 vertices each). texture may be null (white).
-    void DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, bool transparent = false);
+    void DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, Blend blend = Blend::Opaque);
     void EndFrame();
 
 private:
     struct Batch {
         const Texture3D* texture;
-        bool transparent;
+        Blend blend;
         std::vector<Vertex3D> verts;
     };
     unsigned program_ = 0, vao_ = 0, vbo_ = 0, white_ = 0;

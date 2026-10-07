@@ -44,7 +44,10 @@ void DrawMesh(Renderer3D& r, const Mesh& mesh, const Mat4& world, float dissolve
             tris.push_back(v);
         }
         static const bool debugNoTex = std::getenv("RR_DEBUG_NOTEX") != nullptr;
-        r.DrawTriangles(debugNoTex ? nullptr : mat.texture, tris.data(), tris.size(), alpha < 0.999f || mat.additive);
+        // Additive groups always go to the alpha pass; others only while see-through
+        // (Mesh_SetGroupMaterialValues).
+        const Blend blend = mat.additive ? Blend::Additive : alpha < 0.999f ? Blend::Alpha : Blend::Opaque;
+        r.DrawTriangles(debugNoTex ? nullptr : mat.texture, tris.data(), tris.size(), blend);
     }
 }
 
