@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "core/Log.h"
+#include "core/Random.h"
 #include "fs/Path.h"
 #include "game/objects/GameObject.h"
 #include "game/world/Level.h"
@@ -188,6 +189,25 @@ Task* TaskSystem::CreateReinforce(const world::Level& level, BlockPos block) {
     return t;
 }
 
+Task* TaskSystem::CreateTrain(GameObject& building, uint32_t ability, GameObject* forUnit) {
+    // The task's priority class follows the skill.
+    PriorityType p = PriorityType::Upgrade;
+    switch (ability) {
+    case Ability::Pilot:
+    case Ability::Sailor:
+    case Ability::Driver: p = PriorityType::GetIn; break;
+    case Ability::Dynamite: p = PriorityType::Destruction; break;
+    case Ability::Repair: p = PriorityType::Repair; break;
+    case Ability::Scanner: p = PriorityType::Construction; break;
+    default: break;
+    }
+    Task* t = NewTask(tasks_, TaskType::Train, p, priorityValue_[size_t(p)]);
+    t->target = &building;
+    t->ability = ability;
+    t->forUnit = forUnit;
+    return t;
+}
+
 std::vector<GameObject*> TaskSystem::CancelBlockTasks(BlockPos block, TaskType type) {
     std::vector<GameObject*> units;
     for (auto& t : tasks_) {
@@ -299,6 +319,7 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
     case TaskType::Request: return !hasStock || hasStock(t.resource);
     case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
     case TaskType::GetTool: return t.tool != ToolType::Count && !unit.HasTool(t.tool);
+    case TaskType::Train: return t.target && !t.target->removed && !(unit.abilities & t.ability);
     default: return false;
     }
 }
@@ -336,6 +357,38 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         if (!RouteBlocks(level, unit, from, t.block, route) || !objects.RouteBegin(unit, route)) return false;
         unit.route.back().action = RouteAction::Clear;
         break;
+    case TaskType::Train: {
+        // LegoObject_TryTrain: on a block beside the building, 4 units from the shared edge at a
+        // random point along it, facing the building.
+        BlockPos bb;
+        if (!t.target || !objects.BlockOf(*t.target, bb)) return false;
+        static const int kDx[4] = {0, 1, 0, -1}, kDy[4] = {-1, 0, 1, 0};
+        const world::Map3D& map = level.map();
+        const float bs = map.blockSize();
+        bool routed = false;
+        ++approachCounter_;
+        for (int i = 0; i < 4 && !routed; ++i) {
+            const int d = int((approachCounter_ + unsigned(i)) & 3);
+            const BlockPos n{bb.x + kDx[d], bb.y + kDy[d]};
+            if (!level.InBounds(n.x, n.y) ||
+                GetCrossTerrainType(level, &unit, n.x, n.y, n.x, n.y, false) == CrossType::Blocked)
+                continue;
+            if (!RouteBlocks(level, unit, from, n, route)) continue;
+            const Vec2 nc = map.BlockCentre(n.x, n.y), bc = map.BlockCentre(bb.x, bb.y);
+            const Vec2 dir{(bc.x - nc.x) / bs, (bc.y - nc.y) / bs};  // towards the building
+            const float along = (random::RandRange(0.1f, 0.9f) - 0.5f) * bs;
+            const Vec2 at{nc.x + dir.x * (bs * 0.5f - 4.0f) - dir.y * along,
+                          nc.y + dir.y * (bs * 0.5f - 4.0f) + dir.x * along};
+            if (!objects.RouteBegin(unit, route, &at)) return false;
+            const uint8_t face = dir.y > 0.5f ? 0 : dir.x > 0.5f ? 1 : dir.y < -0.5f ? 2 : 3;
+            unit.route.back().action = RouteAction::Train;
+            unit.route.back().flags |= RouteFlag::Face | face;
+            unit.stateTarget = t.target;
+            routed = true;
+        }
+        if (!routed) return false;
+        break;
+    }
     case TaskType::Collect: {
         BlockPos tb;
         if (!t.target || !objects.BlockOf(*t.target, tb)) return false;

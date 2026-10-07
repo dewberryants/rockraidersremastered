@@ -52,6 +52,7 @@ struct Task {
     ObjType resource = ObjType::None;
     int zone = 0;
     ToolType tool = ToolType::Count;   // GetTool: the tool to fetch
+    uint32_t ability = 0;              // Train: the skill to learn (Ability)
     bool toolRequested = false;        // a GetTool job has been raised for this task
     GameObject* forUnit = nullptr;     // only this unit may take the task
 };
@@ -76,6 +77,8 @@ public:
     Task* CreateClear(BlockPos block);
     // AITask_DoReinforce_AtBlockPos.
     Task* CreateReinforce(const world::Level& level, BlockPos block);
+    // AITask_DoTrain_Target: learn a skill at a building that trains it.
+    Task* CreateTrain(GameObject& building, uint32_t ability, GameObject* forUnit);
     // Removes the block's pending tasks of a type; returns the units that were on them.
     std::vector<GameObject*> CancelBlockTasks(BlockPos block, TaskType type);
     bool HasBlockTask(BlockPos block, TaskType type) const;

@@ -38,6 +38,7 @@ bool Level::Load(const Config& cfg, std::string_view gameName, std::string_view 
     settings_.digDepth = num("DigDepth");
     settings_.roofHeight = num("RoofHeight");
     settings_.roughLevel = num("RoughLevel");
+    settings_.trainTime = num("TrainTime") * 25.0f;
     settings_.useRoof = cfg.GetBool(key("UseRoof")) == BoolTri::True;
     settings_.textureSet = cfg.GetString(key("TextureSet"), "");
     settings_.fog = cfg.GetRGB(key("FogColourRGB"), settings_.fogR, settings_.fogG, settings_.fogB);

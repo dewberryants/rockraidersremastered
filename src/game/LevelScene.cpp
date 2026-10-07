@@ -406,6 +406,25 @@ public:
         case MenuItem::BuildSmallVehicle:
         case MenuItem::BuildLargeVehicle: return true;
         case MenuItem::GetTool: return selection_.Primary() && selection_.Primary()->type == ObjType::MiniFigure;
+        case MenuItem::TrainSkill: {
+            // Some building trains something the unit has not learnt yet.
+            const GameObject* u = selection_.Primary();
+            if (!u || u->type != ObjType::MiniFigure || (u->abilities & Ability::All) == Ability::All) return false;
+            for (uint32_t a = 1; a <= Ability::Scanner; a <<= 1)
+                if (NearestTrainer(*u, a)) return true;
+            return false;
+        }
+        case MenuItem::TrainDriver:
+        case MenuItem::TrainEngineer:
+        case MenuItem::TrainGeologist:
+        case MenuItem::TrainPilot:
+        case MenuItem::TrainSailor:
+        case MenuItem::TrainDynamite: {
+            const GameObject* u = selection_.Primary();
+            const uint32_t a = AbilityOfItem(item);
+            if (!u || u->type != ObjType::MiniFigure || (u->abilities & a) || !NearestTrainer(*u, a)) return false;
+            return u->trainTimer >= level_.settings().trainTime;
+        }
         case MenuItem::GetDrill:
         case MenuItem::GetSpade:
         case MenuItem::GetHammer:
@@ -449,6 +468,18 @@ public:
         case MenuItem::Reinforce: t = tasks_.CreateReinforce(level_, b); break;
         case MenuItem::LayPath: StartPath(b); break;
         case MenuItem::GetTool: panel.OpenMenu(MenuType::GetTool); return;
+        case MenuItem::TrainSkill: panel.OpenMenu(MenuType::TrainSkill); return;
+        case MenuItem::TrainDriver:
+        case MenuItem::TrainEngineer:
+        case MenuItem::TrainGeologist:
+        case MenuItem::TrainPilot:
+        case MenuItem::TrainSailor:
+        case MenuItem::TrainDynamite:
+            // Interface_DoAction: the nearest building that trains the skill.
+            if (GameObject* u = selection_.Primary())
+                if (GameObject* trainer = NearestTrainer(*u, AbilityOfItem(item)))
+                    t = tasks_.CreateTrain(*trainer, AbilityOfItem(item), u);
+            break;
         case MenuItem::GetDrill:
         case MenuItem::GetSpade:
         case MenuItem::GetHammer:
@@ -496,6 +527,11 @@ public:
                 tasks_.CreateClear(t->block);
             } else if (t->type == TaskType::Clear && (b.flags & world::BlockFlag::CleanFloor)) {
                 messages_.Post(MessageType::ClearComplete, nullptr, 0, &t->block);
+            } else if (t->type == TaskType::Train) {
+                // LegoObject_TrainMiniFigure. TODO(interface): Info_Send / Text_DisplayMessage.
+                unit.abilities |= t->ability;
+                unit.trainTimer = 0.0f;
+                RR_INFO("%s trained (abilities %02x)", unit.info->name.c_str(), unit.abilities);
             }
         }
         tasks_.TaskFinished(unit, success);
@@ -904,6 +940,45 @@ public:
             for (int k = 0; k < 4; ++k) r2d.DrawLine(sx[k], sy[k], sx[(k + 1) & 3], sy[(k + 1) & 3], cc);
             if (pathTile) ++i;
         }
+    }
+
+    static uint32_t AbilityOfItem(MenuItem item) {
+        switch (item) {
+        case MenuItem::TrainDriver: return Ability::Driver;
+        case MenuItem::TrainEngineer: return Ability::Repair;
+        case MenuItem::TrainGeologist: return Ability::Scanner;
+        case MenuItem::TrainPilot: return Ability::Pilot;
+        case MenuItem::TrainSailor: return Ability::Sailor;
+        case MenuItem::TrainDynamite: return Ability::Dynamite;
+        default: return 0;
+        }
+    }
+
+    // LegoObject_Search (trainer): the nearest standing building whose stats train the skill.
+    GameObject* NearestTrainer(const GameObject& unit, uint32_t ability) const {
+        uint32_t flag = 0;
+        switch (ability) {
+        case Ability::Pilot: flag = StatsFlag2::TrainPilot; break;
+        case Ability::Sailor: flag = StatsFlag2::TrainSailor; break;
+        case Ability::Driver: flag = StatsFlag2::TrainDriver; break;
+        case Ability::Dynamite: flag = StatsFlag2::TrainDynamite; break;
+        case Ability::Repair: flag = StatsFlag2::TrainRepair; break;
+        case Ability::Scanner: flag = StatsFlag2::TrainScanner; break;
+        default: return nullptr;
+        }
+        GameObject* best = nullptr;
+        float bestD = 0.0f;
+        for (const auto& op : objects_.objects()) {
+            GameObject& b = *op;
+            if (b.type != ObjType::Building || b.removed || b.hidden || b.teleportingIn || !b.stats) continue;
+            if (!(b.stats->F2(b.level) & flag)) continue;
+            const float dx = b.position.x - unit.position.x, dy = b.position.y - unit.position.y;
+            if (!best || dx * dx + dy * dy < bestD) {
+                best = &b;
+                bestD = dx * dx + dy * dy;
+            }
+        }
+        return best;
     }
 
     static ToolType ToolOfItem(MenuItem item) {

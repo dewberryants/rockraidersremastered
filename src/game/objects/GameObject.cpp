@@ -237,6 +237,7 @@ void ObjectList::Update(float elapsed) {
     for (auto& op : objects_) {
         GameObject& o = *op;
         if (o.removed) continue;
+        if (o.type == ObjType::MiniFigure) o.trainTimer += elapsed;
         o.UpdateActivityChange();
         const Activity* before = o.anim;
         const bool fresh = o.animFresh;
@@ -336,6 +337,11 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         // Four hammer blows (Lego.cfg ReinforceHits, default 4).
         o.state = UnitState::Reinforcing;
         o.SetActivity(ActivityType::Reinforce, kReinforceHits);
+        break;
+    case RouteAction::Train:
+        // Arrival flag 0x400: Activity_Train plays once; the skill is granted at its end.
+        o.state = UnitState::Training;
+        o.SetActivity(ActivityType::Train);
         break;
     case RouteAction::Clear:
         o.state = UnitState::Clearing;
@@ -446,6 +452,9 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
             level.ReinforceBlock(o.stateBlock.x, o.stateBlock.y);
             FinishAction(o, true);
         }
+        break;
+    case UnitState::Training:
+        if (o.animOverrun > 0.0f) FinishAction(o, true);
         break;
     case UnitState::Clearing:
         if (o.animOverrun > 0.0f) {

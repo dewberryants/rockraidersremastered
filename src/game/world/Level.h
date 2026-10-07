@@ -74,6 +74,7 @@ struct LevelSettings {
     float digDepth = 40.0f;
     float roofHeight = 40.0f;
     float roughLevel = 0.0f;
+    float trainTime = 0.0f;  // TrainTime x 25: a unit can train again once this long has passed
     bool useRoof = false;
     std::string textureSet;
     bool fog = false;

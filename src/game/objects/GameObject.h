@@ -31,9 +31,16 @@ constexpr uint32_t CanGather = 0x4000000;      // model has Activity_Gather
 constexpr uint32_t CanRouteRubble = 0x10000000;  // model has Activity_RouteRubble
 }  // namespace ObjFlag3
 
+// Trained skills of minifigures (LegoObject_AbilityFlags).
+namespace Ability {
+constexpr uint32_t Pilot = 0x1, Sailor = 0x2, Driver = 0x4, Dynamite = 0x8, Repair = 0x10, Scanner = 0x20;
+constexpr uint32_t All = 0x3f;
+}  // namespace Ability
+
 // What a unit is busy doing after arriving somewhere.
 enum class UnitState : uint8_t {
-    Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool, Reinforcing
+    Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool, Reinforcing,
+    Training
 };
 
 // A live game object (LegoObject). Grows as the game systems are implemented.
@@ -83,6 +90,8 @@ struct GameObject {
     ToolType wantedTool = ToolType::Count; // tool to pick up at the tool store
     int drillSound = -1;                   // play handle of the looping drill sound
     bool triggered = false;                // the animation passed its TRIGGER frame this tick
+    uint32_t abilities = 0;                // trained skills (Ability)
+    float trainTimer = 0.0f;               // time since the last training (LegoObject_UpdateElapsedTimes)
     bool crystalDrained = false;           // power crystal used up (UnpoweredCrystalRGB)
     bool powered = false;                  // building: drawing power (or generating it)
     bool powerOff = false;                 // building: switched off by the player
