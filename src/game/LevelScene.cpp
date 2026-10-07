@@ -468,8 +468,12 @@ public:
                 if (teleportQueue_.size() < kMaxTeleportQueue) teleportQueue_.push_back(pilot);
             break;
         case MenuItem::DeselectDig:
+            // The request goes, and whoever was on their way or drilling stops.
             level_.block(b.x, b.y).flags &= ~world::BlockFlag::DigRequested;
-            // TODO(ai): AITask_RemoveWallReferences for the block's dig task.
+            for (GameObject* u : tasks_.CancelBlockTasks(b, TaskType::Dig)) {
+                if (u->routing) objects_.RouteEnd(*u, false);
+                if (u->state != UnitState::Idle) objects_.FinishAction(*u, false);
+            }
             break;
         default: break;
         }
@@ -1091,17 +1095,50 @@ public:
         level_.map().UpdateUVs(elapsed);
     }
 
+    // Map3D_SetBlockHighlight tints (WallHighlightType): none, dig request, dynamite, reinforce,
+    // the block whose menu is open, tutorial flashing.
+    enum Highlight : uint8_t { kNone, kDig, kDynamite, kReinforce, kSelected, kTutorial };
+    uint8_t BlockHighlight(int bx, int by) const {
+        const IconPanel& panel = *GetGame().iconPanel;
+        const BlockPos b{bx, by};
+        switch (panel.menu()) {
+        case MenuType::Ground:
+        case MenuType::Erode:
+        case MenuType::PlaceFence:
+        case MenuType::Construction:
+        case MenuType::Rubble:
+        case MenuType::Wall:
+            if (panel.block() == b) return kSelected;
+            break;
+        default: break;
+        }
+        if (tasks_.HasBlockTask(b, TaskType::Reinforce)) return kReinforce;
+        if (level_.block(bx, by).flags & world::BlockFlag::DigRequested) return kDig;
+        return kNone;
+    }
+
     void DrawTerrain() {
         const world::Map3D& map = level_.map();
+        static const uint32_t kHighlightColour[6] = {
+            0xFFFFFFFFu,  // (1, 1, 1)
+            0xFF808080u,  // (0.5, 0.5, 0.5)
+            0xFF6680FFu,  // (1, 0.5, 0.4)
+            0xFF80FF80u,  // (0.5, 1, 0.5)
+            0xFFFF8066u,  // (0.4, 0.5, 1)
+            0xFF009999u,  // (0.6, 0.6, 0)
+        };
         tris_.clear();
-        for (const world::Map3D::Quad& q : map.quads()) {
+        const int bw = map.blocksW();
+        for (size_t qi = 0; qi < map.quads().size(); ++qi) {
+            const world::Map3D::Quad& q = map.quads()[qi];
             if (q.hidden) continue;
+            const uint32_t colour = kHighlightColour[BlockHighlight(int(qi) % bw, int(qi) / bw)];
             const Texture3D* tex = textures_.Get(q.texture);
             static const int kPlain[6] = {0, 1, 3, 1, 2, 3};
             static const int kRotated[6] = {3, 0, 2, 0, 1, 2};
             const int* order = q.rotated ? kRotated : kPlain;
             Vertex3D v[6];
-            for (int i = 0; i < 6; ++i) v[i] = {q.pos[order[i]], q.normal[order[i]], q.uv[order[i]], 0xFFFFFFFFu};
+            for (int i = 0; i < 6; ++i) v[i] = {q.pos[order[i]], q.normal[order[i]], q.uv[order[i]], colour};
             renderer_.DrawTriangles(tex, v, 6);
         }
     }

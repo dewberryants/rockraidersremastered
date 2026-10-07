@@ -185,8 +185,23 @@ Task* TaskSystem::CreateReinforce(const world::Level& level, BlockPos block) {
     Task* t = NewTask(tasks_, TaskType::Reinforce, PriorityType::Reinforce,
                       priorityValue_[size_t(PriorityType::Reinforce)]);
     t->block = block;
-    // TODO(interface): Map3D_SetBlockHighlight(3) on the block (dig requests are not highlighted yet either).
     return t;
+}
+
+std::vector<GameObject*> TaskSystem::CancelBlockTasks(BlockPos block, TaskType type) {
+    std::vector<GameObject*> units;
+    for (auto& t : tasks_) {
+        if (t->type != type || !(t->block == block) || t->remove) continue;
+        t->remove = true;
+        if (t->assigned) units.push_back(t->assigned);
+    }
+    return units;
+}
+
+bool TaskSystem::HasBlockTask(BlockPos block, TaskType type) const {
+    for (const auto& t : tasks_)
+        if (t->type == type && t->block == block && !t->remove) return true;
+    return false;
 }
 
 Task* TaskSystem::CreateClear(BlockPos block) {

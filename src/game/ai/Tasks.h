@@ -76,6 +76,9 @@ public:
     Task* CreateClear(BlockPos block);
     // AITask_DoReinforce_AtBlockPos.
     Task* CreateReinforce(const world::Level& level, BlockPos block);
+    // Removes the block's pending tasks of a type; returns the units that were on them.
+    std::vector<GameObject*> CancelBlockTasks(BlockPos block, TaskType type);
+    bool HasBlockTask(BlockPos block, TaskType type) const;
     Task* CreateCollect(GameObject& object);
     // AITask_DoRequest_ObjectType: fetch one resource from storage for a construction site.
     Task* CreateRequest(int zone, ObjType resource);
