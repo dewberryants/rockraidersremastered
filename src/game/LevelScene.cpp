@@ -13,6 +13,7 @@
 #include "game/ai/Tasks.h"
 #include "game/nerps/Nerps.h"
 #include "game/nerps/NerpsFunctions.h"
+#include "game/ui/Objective.h"
 #include "game/ui/Radar.h"
 #include "game/objects/ObjectRegistry.h"
 #include "game/Pointer.h"
@@ -79,6 +80,8 @@ public:
             }
         }
         LoadScript(cfg);
+        objective_.Load(cfg, game.gameName, levelId_, game.briefFont.get());
+        objective_.Show(ObjectiveWindow::State::Briefing);
         game.panels->Reset();
         crystalQuota_ = cfg.GetInt(Config::Id(game.gameName, levelId_, "Reward", "Quota", "Crystals")).value_or(0);
         game.panels->onButton = [this](PanelButton b) { OnPanelButton(b); };
@@ -304,8 +307,6 @@ public:
         const std::string base = Config::Id(GetGame().gameName, levelId_);
         if (!script_.LoadScript(cfg.GetString(Config::Id(base, "NERPFile"), ""))) return;
         script_.LoadMessages(cfg.GetString(Config::Id(base, "NERPMessageFile"), ""));
-        // TODO(objective): the briefing window; scripts start once it has been closed.
-        script_.objectiveSwitch = 1;
         script_.call = [this](int index, const int* args) { return ScriptCall(index, args); };
     }
 
@@ -337,6 +338,7 @@ public:
         if (name == "SetLevelCompleted" || name == "SetLevelFail") {
             levelStatus_ = name == "SetLevelCompleted" ? 1 : 2;
             RR_INFO("Level script: %s", std::string(name).c_str());
+            objective_.Show(levelStatus_ == 1 ? ObjectiveWindow::State::Achieved : ObjectiveWindow::State::Failed);
         }
         else if (name == "GetCrystalsCurrentlyStored") return crystals_;
         else if (name == "GetCrystalsPickedUp") return crystalsPickedUp_;
@@ -351,7 +353,7 @@ public:
         } else if (name == "GetSlugsOnLevel") return CountObjects("Slug");
         else if (name == "GetHiddenObjectsFound") return hiddenObjectsFound_;
         else if (name == "SetHiddenObjectsFound") return hiddenObjectsFound_ = args[0];
-        else if (name == "GetObjectiveShowing") return 0;
+        else if (name == "GetObjectiveShowing") return objective_.showing() ? 1 : 0;
         else if (name == "GetMessagesAreUpToDate") return 1;
         else if (name == "SetMessage") {
             // The "permit" flag blocks messages while non-zero (scripts clear it to talk).
@@ -461,6 +463,19 @@ public:
             return;
         }
         if (failed_) return;
+        // The briefing pauses the level; closing it lets the script start (objective switch).
+        if (objective_.showing()) {
+            switch (objective_.HandleInput(in)) {
+            case ObjectiveWindow::State::Briefing: script_.objectiveSwitch = 1; break;
+            case ObjectiveWindow::State::Achieved:
+            case ObjectiveWindow::State::Failed:
+                // TODO(rewards): the rewards screen comes between the level and the front end.
+                GetApp().SetScene(front::CreateFrontEndScene());
+                return;
+            default: break;
+            }
+            return;
+        }
         // Temporary free camera until the interface/camera control module is implemented.
         const float speed = 7.0f * elapsed;
         const float c = std::cos(camera_.rotation), s = std::sin(camera_.rotation);
@@ -503,11 +518,6 @@ public:
         if (script_.loaded() && levelStatus_ == 0) {
             script_.UpdateTimers(elapsed);
             script_.Execute();
-        }
-        if (levelStatus_ != 0 && (endTicks_ += 1) > 250) {
-            // TODO(rewards): the rewards screen comes between the level and the front end.
-            GetApp().SetScene(front::CreateFrontEndScene());
-            return;
         }
         level_.map().UpdateUVs(elapsed);
     }
@@ -607,11 +617,8 @@ public:
             r2d.SetAnchor(Anchor::Left);
             if (!message_.empty() && script_.messageTimer > 0.0f) f->Draw(r2d, 90.0f, 440.0f, message_);
             r2d.SetAnchor(Anchor::Center);
-            if (levelStatus_ != 0) {
-                const std::string s = levelStatus_ == 1 ? "Level complete" : "Level failed";
-                f->Draw(r2d, 320.0f - float(f->StringWidth(s)) * 0.5f, 220.0f, s);
-            }
         }
+        objective_.Draw(r2d);
         // TODO(interface): proper tooltip boxes (ToolTip_*); plain text for now.
         std::string tip = game.panels->hoverToolTip();
         if (tip.empty()) tip = game.iconPanel->hoverToolTip();
@@ -637,7 +644,7 @@ private:
     nerps::Runtime script_;
     std::string message_;
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
-    int endTicks_ = 0;
+    ObjectiveWindow objective_;
     RadarMap radar_;
     uint64_t lastFrameMs_ = 0;
     Vec3f ambient_, topSpot_;
