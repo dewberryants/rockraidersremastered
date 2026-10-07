@@ -61,7 +61,8 @@ struct RouteNode {
 namespace RouteAction {
 constexpr uint8_t None = 0, Drill = 1, Reinforce = 2, Collect = 3, Clear = 4, Throw = 5, Repair = 6, Deposit = 7,
                   Drop = 8, Place = 9, Enter = 10, Eat = 11;
-constexpr uint8_t Fetch = 100;  // ours: take a resource out of a storage building
+constexpr uint8_t Fetch = 100;      // ours: take a resource out of a storage building
+constexpr uint8_t BuildPath = 101;  // ours: turn a laid path into a power path
 }
 namespace RouteFlag {
 constexpr uint8_t Last = 0x8;         // final node reached through a zero-length route

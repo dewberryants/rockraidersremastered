@@ -54,6 +54,8 @@ struct ConstructionZone {
     int crystalsNeeded = 0, oreNeeded = 0;
     int crystalsPlaced = 0, orePlaced = 0;
     std::vector<GameObject*> placed;  // resources dropped on the site
+    bool path = false;            // a power path site (type is null)
+    bool buildRequested = false;  // path site: the build-path job has been handed out
     bool complete() const { return crystalsPlaced >= crystalsNeeded && orePlaced >= oreNeeded; }
 };
 

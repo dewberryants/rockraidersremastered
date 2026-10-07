@@ -259,6 +259,11 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         o.state = UnitState::Placing;
         o.SetActivity(ActivityType::Place);
         break;
+    case RouteAction::BuildPath:
+        // LegoObject_TryBuildPath: the path is swept into place with the clearing animation.
+        o.state = UnitState::BuildingPath;
+        o.SetActivity(ActivityType::Clear);
+        break;
     default: FinishAction(o, true); break;
     }
 }
@@ -367,6 +372,12 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
             }
             o.deliverZone = 0;
             FinishAction(o, item != nullptr);
+        }
+        break;
+    case UnitState::BuildingPath:
+        if (o.animOverrun > 0.0f) {
+            if (onBuildPath) onBuildPath(o, o.stateBlock);
+            FinishAction(o, true);
         }
         break;
     case UnitState::Idle: break;

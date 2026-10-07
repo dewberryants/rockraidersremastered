@@ -120,7 +120,7 @@ void Level::LoadPaths(const std::string& path) {
             if (v == 2) {
                 b.flags |= BlockFlag::Path;
             } else if (v == 1) {  // rubble
-                b.flags &= ~(BlockFlag::CleanFloor | BlockFlag::Path | BlockFlag::PoweredFloor);
+                b.flags &= ~(BlockFlag::CleanFloor | BlockFlag::Path | BlockFlag::LaidPath);
                 b.flags |= BlockFlag::RubbleMask;
             }
         }
@@ -202,7 +202,7 @@ void Level::UpdateSurface(int x, int y) {
                 static const uint8_t kRubble[4] = {0x13, 0x12, 0x11, 0x10};
                 b.texture = kRubble[b.flags & BlockFlag::RubbleMask];
             } else {
-                b.texture = (b.flags & BlockFlag::PoweredFloor) ? 0x61 : 0x00;
+                b.texture = (b.flags & BlockFlag::LaidPath) ? 0x61 : 0x00;
             }
         } else {
             b.texture = (b.flags2 & BlockFlag2::Powered) ? 0x66 : 0x76;
@@ -314,7 +314,7 @@ bool Level::DestroyWall(int x, int y, bool hiddenCavern) {
         b.flags |= BlockFlag::CleanFloor;
     } else {
         // TODO(game): uncover neighbouring hidden caverns, messages, rubble clearing tasks.
-        b.flags &= ~(BlockFlag::CleanFloor | BlockFlag::Path | BlockFlag::PoweredFloor);
+        b.flags &= ~(BlockFlag::CleanFloor | BlockFlag::Path | BlockFlag::LaidPath);
         b.flags |= BlockFlag::RubbleMask;
     }
     for (int dy = -1; dy <= 1; ++dy)

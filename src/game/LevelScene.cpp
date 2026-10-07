@@ -58,6 +58,7 @@ public:
         objects_.onActionDone = [this](GameObject& u, bool ok) { OnActionDone(u, ok); };
         objects_.onFetch = [this](GameObject& u) { return FetchFromStore(u); };
         objects_.onPlace = [this](GameObject& u, GameObject& item) { PlaceOnSite(u, item); };
+        objects_.onBuildPath = [this](GameObject&, BlockPos b) { FinishPath(b); };
         tasks_.hasStock = [this](ObjType t) { return t == ObjType::PowerCrystal ? crystals_ > 0 : ore_ > 0; };
         tasks_.zoneBlock = [this](int zone, BlockPos& b) {
             for (const auto& z : zones_)
@@ -100,6 +101,13 @@ public:
         if (const char* lvl = std::getenv("RR_DEBUG_BUILDLEVEL"))
             for (const auto& o : objects_.objects())
                 if (o->type == ObjType::Building) o->level = std::atoi(lvl);
+        // RR_DEBUG_LAYPATH="x,y;..." lays power paths to be built.
+        if (const char* laid = std::getenv("RR_DEBUG_LAYPATH")) {
+            for (std::string_view entry : SplitTokens(laid, ";")) {
+                const auto xy = SplitTokens(entry, ",");
+                if (xy.size() == 2) StartPath({std::atoi(std::string(xy[0]).c_str()), std::atoi(std::string(xy[1]).c_str())});
+            }
+        }
         // RR_DEBUG_BUILD="Type,x,y,dir" starts a construction site without the placement checks.
         if (const char* build = std::getenv("RR_DEBUG_BUILD")) {
             const auto f = SplitTokens(build, ",");
@@ -290,6 +298,15 @@ public:
         case MenuItem::BuildBuilding:
         case MenuItem::BuildSmallVehicle:
         case MenuItem::BuildLargeVehicle: return true;
+        case MenuItem::LayPath: {
+            // Clean free floor without a path, laid path or site already.
+            // TODO(interface): Interface item checks (dependencies for Path, rubble rules).
+            using namespace world;
+            if (!(blk.flags & BlockFlag::Ground) || !(blk.flags & BlockFlag::CleanFloor)) return false;
+            if (blk.flags & (BlockFlag::Path | BlockFlag::LaidPath | BlockFlag::Foundation | BlockFlag::Building))
+                return false;
+            return blk.terrain != Terrain::Lava && blk.terrain != Terrain::Lake;
+        }
         case MenuItem::TeleportMan: {
             // A building that can beam Rock Raiders in, and room in the queue.
             if (teleportQueue_.size() >= kMaxTeleportQueue) return false;
@@ -314,6 +331,7 @@ public:
             if (t) level_.block(b.x, b.y).flags |= world::BlockFlag::DigRequested;
             break;
         case MenuItem::ClearRubble: t = tasks_.CreateClear(b); break;
+        case MenuItem::LayPath: StartPath(b); break;
         // Interface_DoAction: the build icons open their lists.
         case MenuItem::BuildBuilding: panel.OpenMenu(MenuType::BuildBuilding); return;
         case MenuItem::BuildSmallVehicle: panel.OpenMenu(MenuType::BuildSmallVehicle); return;
@@ -559,11 +577,56 @@ public:
         zones_.push_back(std::move(z));
     }
 
+    // Construction_Zone_StartPath: the block shows a laid path and waits for the path's cost.
+    void StartPath(BlockPos b) {
+        auto z = std::make_unique<ConstructionZone>();
+        z->handle = nextZoneHandle_++;
+        z->origin = b;
+        z->footprint = {b};
+        z->path = true;
+        if (const ObjectStats* st = GetStats().Find("Path")) {
+            z->crystalsNeeded = int(st->Num("CostCrystal", 0));
+            // TODO(refinery): refined ore instead when an ore refinery exists.
+            z->oreNeeded = int(st->Num("CostOre", 0));
+        }
+        level_.block(b.x, b.y).flags |= world::BlockFlag::LaidPath;
+        level_.UpdateSurface(b.x, b.y);
+        for (int i = 0; i < z->crystalsNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::PowerCrystal);
+        for (int i = 0; i < z->oreNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::Ore);
+        zones_.push_back(std::move(z));
+    }
+
+    // Construction_Zone_CompletePath: the laid path becomes a power path; its resources are used.
+    void FinishPath(BlockPos b) {
+        for (size_t i = 0; i < zones_.size(); ++i) {
+            ConstructionZone& z = *zones_[i];
+            if (!z.path || z.origin != b) continue;
+            for (GameObject* r : z.placed) objects_.Remove(*r);
+            world::Block& blk = level_.block(b.x, b.y);
+            blk.flags = (blk.flags & ~world::BlockFlag::LaidPath) | world::BlockFlag::Path;
+            // TODO(power): the power grid update (powered paths glow).
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx) level_.UpdateSurface(b.x + dx, b.y + dy);
+            tasks_.RemoveZone(z.handle);
+            zones_.erase(zones_.begin() + std::ptrdiff_t(i));
+            RR_INFO("Power path built at %d,%d", b.x, b.y);
+            return;
+        }
+    }
+
     // Construction_UpdateAll: a site with everything delivered becomes the building once nobody
-    // stands on it.
+    // stands on it; a path site gets its build-path job.
     void UpdateConstruction() {
         for (size_t i = 0; i < zones_.size();) {
             ConstructionZone& z = *zones_[i];
+            if (z.path) {
+                if (z.complete() && !z.buildRequested) {
+                    z.buildRequested = true;
+                    tasks_.CreateBuildPath(z.origin);
+                }
+                ++i;
+                continue;
+            }
             if (!z.complete() || UnitsOnFootprint(z)) {
                 ++i;
                 continue;

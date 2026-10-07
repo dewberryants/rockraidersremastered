@@ -152,6 +152,12 @@ Task* TaskSystem::CreateRequest(int zone, ObjType resource) {
     return t;
 }
 
+Task* TaskSystem::CreateBuildPath(BlockPos block) {
+    Task* t = NewTask(tasks_, TaskType::BuildPath, PriorityType::BuildPath, priorityValue_[size_t(PriorityType::BuildPath)]);
+    t->block = block;
+    return t;
+}
+
 void TaskSystem::RemoveZone(int zone) {
     for (auto& t : tasks_)
         if (t->type == TaskType::Request && t->zone == zone) t->remove = true;
@@ -193,6 +199,7 @@ bool TaskSystem::CanDo(const Task& t, const GameObject& unit, const world::Level
     }
     case TaskType::Collect: return t.target && !t.target->removed && !t.target->carrier && !t.target->hidden;
     case TaskType::Request: return !hasStock || hasStock(t.resource);
+    case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
     default: return false;
     }
 }
@@ -234,6 +241,10 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         unit.stateTarget = t.target;
         break;
     }
+    case TaskType::BuildPath:
+        if (!RouteBlocks(level, unit, from, t.block, route) || !objects.RouteBegin(unit, route)) return false;
+        unit.route.back().action = RouteAction::BuildPath;
+        break;
     case TaskType::Request: {
         // Off to the nearest storage building to take the resource out.
         GameObject* store = NearestStore(objects, unit);

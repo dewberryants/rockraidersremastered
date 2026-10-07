@@ -65,6 +65,8 @@ public:
     Task* CreateCollect(GameObject& object);
     // AITask_DoRequest_ObjectType: fetch one resource from storage for a construction site.
     Task* CreateRequest(int zone, ObjType resource);
+    // AITask_DoBuildPath_AtPosition: lay the power path once its resources are on the block.
+    Task* CreateBuildPath(BlockPos block);
     void RemoveZone(int zone);
 
     // Game hooks: stock left in storage, and where a construction site takes deliveries.

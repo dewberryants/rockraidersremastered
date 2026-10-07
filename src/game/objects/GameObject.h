@@ -30,7 +30,7 @@ constexpr uint32_t CanRouteRubble = 0x10000000;  // model has Activity_RouteRubb
 }  // namespace ObjFlag3
 
 // What a unit is busy doing after arriving somewhere.
-enum class UnitState : uint8_t { Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing };
+enum class UnitState : uint8_t { Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath };
 
 // A live game object (LegoObject). Grows as the game systems are implemented.
 struct GameObject {
@@ -142,6 +142,8 @@ public:
     std::function<GameObject*(GameObject& unit)> onFetch;
     // A carried resource put down on its construction site.
     std::function<void(GameObject& unit, GameObject& item)> onPlace;
+    // A unit finished laying the power path on a block.
+    std::function<void(GameObject& unit, BlockPos block)> onBuildPath;
     // Notified when a carried object is delivered to a building (resources).
     std::function<void(GameObject& unit, GameObject& delivered, GameObject& building)> onDeposit;
     void Remove(GameObject& o);

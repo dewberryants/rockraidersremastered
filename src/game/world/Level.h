@@ -33,7 +33,7 @@ constexpr uint32_t BuildingPath = 0x8000;   // walkable part of a building (path
 constexpr uint32_t Foundation = 0x100000;   // building foundation floor
 constexpr uint32_t CleanFloor = 0x200000;   // floor without rubble (predug caverns)
 constexpr uint32_t Path = 0x20000000;       // built power path
-constexpr uint32_t PoweredFloor = 0x40000000;
+constexpr uint32_t LaidPath = 0x40000000;   // a power path is laid here, waiting to be built
 constexpr uint32_t DigRequested = 0x800000; // marked for drilling by the player (highlighted)
 constexpr uint32_t Eroding = 0x80000000;    // lava erosion has reached this block
 }  // namespace BlockFlag
