@@ -104,6 +104,11 @@ public:
 
     // Removes one rubble layer; returns true once the floor is clean (Level_Block_ClearRubbleLayer).
     bool ClearRubbleLayer(int x, int y);
+    // LiveObject_CanReinforceBlock (without a unit): an exposed wall inside the border that is
+    // not reinforced yet and not a seam.
+    bool CanReinforce(int x, int y) const;
+    // Level_Block_Reinforce: straight walls take the reinforcement; corners never do.
+    bool ReinforceBlock(int x, int y);
     // Opens a hidden cavern from block (x, y): a wave over the 8 neighbours reaches every
     // connected hidden block (Level_UncoverHiddenCavern).
     void UncoverHiddenCavern(int x, int y);

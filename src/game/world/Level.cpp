@@ -339,6 +339,24 @@ bool Level::DestroyWall(int x, int y, bool hiddenCavern) {
     return true;
 }
 
+bool Level::CanReinforce(int x, int y) const {
+    if (x <= 0 || y <= 0 || x >= width_ - 2 || y >= height_ - 2) return false;
+    const Block& b = block(x, y);
+    return (b.flags & BlockFlag::Wall) && !(b.flags & BlockFlag::Reinforced) && b.terrain != Terrain::RechargeSeam &&
+           b.terrain != Terrain::OreSeam && b.terrain != Terrain::CrystalSeam;
+}
+
+bool Level::ReinforceBlock(int x, int y) {
+    Block& b = block(x, y);
+    if (!(b.flags & BlockFlag::Wall) ||
+        (b.flags & (BlockFlag::Reinforced | BlockFlag::OuterCorner | BlockFlag::InnerCorner)))
+        return false;
+    b.flags |= BlockFlag::Reinforced;
+    UpdateSurface(x, y);
+    // TODO(effects): Level_BlockActivity_Create (the reinforcement block activity).
+    return true;
+}
+
 void Level::UncoverHiddenCavern(int x, int y) {
     std::vector<std::pair<int, int>> wave{{x, y}}, next;
     while (!wave.empty()) {

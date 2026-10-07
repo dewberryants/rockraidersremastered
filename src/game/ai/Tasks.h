@@ -65,6 +65,8 @@ public:
 
     Task* CreateDig(const world::Level& level, BlockPos block, bool userRequested);
     Task* CreateClear(BlockPos block);
+    // AITask_DoReinforce_AtBlockPos.
+    Task* CreateReinforce(const world::Level& level, BlockPos block);
     Task* CreateCollect(GameObject& object);
     // AITask_DoRequest_ObjectType: fetch one resource from storage for a construction site.
     Task* CreateRequest(int zone, ObjType resource);

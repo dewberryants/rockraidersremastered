@@ -25,6 +25,8 @@ const Activity* FindAnim(const std::shared_ptr<ActivityModel>& model, ActivityTy
 
 float FrameCount(const Activity* a) { return a && a->scene ? float(a->scene->frameCount()) : 0.0f; }
 
+constexpr int kReinforceHits = 4;  // Lego.cfg Main::ReinforceHits (not set in the shipped config)
+
 // Whether frame f was passed going from t0 to t1 (every loop for looping animations).
 bool FramePassed(float f, float t0, float t1, bool loop, float frames) {
     if (t1 <= t0) return false;
@@ -330,6 +332,11 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         o.state = UnitState::Drilling;
         o.SetActivity(ActivityType::Drill);
         break;
+    case RouteAction::Reinforce:
+        // Four hammer blows (Lego.cfg ReinforceHits, default 4).
+        o.state = UnitState::Reinforcing;
+        o.SetActivity(ActivityType::Reinforce, kReinforceHits);
+        break;
     case RouteAction::Clear:
         o.state = UnitState::Clearing;
         // Minifigures sweep the rubble twice per layer.
@@ -431,6 +438,15 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         if (b.damage > 1.0f && level.DestroyWall(o.stateBlock.x, o.stateBlock.y, false)) FinishAction(o, true);
         break;
     }
+    case UnitState::Reinforcing:
+        // LegoObject_Update_Reinforcing: done once the blows have played out.
+        if (!level.CanReinforce(o.stateBlock.x, o.stateBlock.y)) {
+            FinishAction(o, false);  // TODO(ai): the game shrugs (Activity_CantDo) first
+        } else if (o.animOverrun > 0.0f) {
+            level.ReinforceBlock(o.stateBlock.x, o.stateBlock.y);
+            FinishAction(o, true);
+        }
+        break;
     case UnitState::Clearing:
         if (o.animOverrun > 0.0f) {
             if (level.ClearRubbleLayer(o.stateBlock.x, o.stateBlock.y)) {
@@ -684,20 +700,22 @@ void ObjectList::UpdateMovement(GameObject& o, float elapsed) {
     o.position.y = p.y;
     o.position.z = level_->map().WorldZ(p.x, p.y);
 
-    // Heading into a wall to drill: stop once the drill reaches the wall block.
+    // Heading into a wall to drill or reinforce it: stop once the unit reaches the wall block.
     // TODO(drilling): use the model's drill null instead of a reach from the collision radius.
     const RouteNode& last = o.route.back();
-    if (last.action == RouteAction::Drill && size_t(o.routeIndex) + 1 >= o.route.size()) {
+    if ((last.action == RouteAction::Drill || last.action == RouteAction::Reinforce) &&
+        size_t(o.routeIndex) + 1 >= o.route.size()) {
         const float reach = (o.stats ? o.stats->Num("CollRadius", o.level, 5.0f) : 5.0f) * 1.5f;
         BlockPos tip;
         if (level_->map().WorldToBlock(p.x + o.faceDir.x * reach, p.y + o.faceDir.y * reach, tip.x, tip.y) &&
             tip == last.block) {
             const BlockPos wall = last.block;
+            const uint8_t action = last.action;
             RouteEnd(o, true);
-            // Face the wall squarely while drilling.
+            // Face the wall squarely while working on it.
             const Vec2 c = level_->map().BlockCentre(wall.x, wall.y);
             o.Face({c.x - o.position.x, c.y - o.position.y});
-            StartAction(o, RouteAction::Drill, wall, nullptr);
+            StartAction(o, action, wall, nullptr);
         }
     }
 }

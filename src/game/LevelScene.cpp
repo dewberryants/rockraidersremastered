@@ -365,6 +365,31 @@ public:
             // Hard rock needs a unit that can drill it; immovable rock never.
             return blk.terrain != world::Terrain::Immovable && !(blk.flags & world::BlockFlag::Ground);
         case MenuItem::ClearRubble: return (blk.flags & world::BlockFlag::Ground) && !(blk.flags & world::BlockFlag::CleanFloor);
+        case MenuItem::Reinforce: {
+            // Interface_GetItemStatus (Reinforce): a straight, unreinforced wall not beside a
+            // building, and someone able to do it (with a hammer, or a tool store to get one).
+            using namespace world;
+            if (blk.flags & (BlockFlag::Reinforced | BlockFlag::OuterCorner | BlockFlag::InnerCorner)) return false;
+            if (!level_.CanReinforce(b.x, b.y)) return false;
+            static const int kNX[4] = {1, 0, -1, 0}, kNY[4] = {0, 1, 0, -1};
+            for (int i = 0; i < 4; ++i)
+                if (level_.InBounds(b.x + kNX[i], b.y + kNY[i]) &&
+                    (level_.block(b.x + kNX[i], b.y + kNY[i]).flags & BlockFlag::Building))
+                    return false;
+            bool toolStore = false;
+            for (const auto& o : objects_.objects())
+                if (o->type == ObjType::Building && !o->removed && !o->hidden && o->stats &&
+                    (o->stats->F1(o->level) & StatsFlag1::ToolStore))
+                    toolStore = true;
+            if (!selection_.empty()) {
+                for (GameObject* u : selection_.units())
+                    if (u->HasTool(ToolType::Hammer)) return true;
+                return toolStore;
+            }
+            for (const auto& o : objects_.objects())
+                if (!o->removed && !o->hidden && (o->flags3 & ObjFlag3::CanReinforce)) return true;
+            return false;
+        }
         case MenuItem::DeselectDig: return (blk.flags & world::BlockFlag::DigRequested) != 0;
         case MenuItem::BuildBuilding:
         case MenuItem::BuildSmallVehicle:
@@ -410,6 +435,7 @@ public:
             if (t) level_.block(b.x, b.y).flags |= world::BlockFlag::DigRequested;
             break;
         case MenuItem::ClearRubble: t = tasks_.CreateClear(b); break;
+        case MenuItem::Reinforce: t = tasks_.CreateReinforce(level_, b); break;
         case MenuItem::LayPath: StartPath(b); break;
         case MenuItem::GetTool: panel.OpenMenu(MenuType::GetTool); return;
         case MenuItem::GetDrill:

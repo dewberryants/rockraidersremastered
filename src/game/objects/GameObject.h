@@ -21,6 +21,7 @@ class Level;
 
 // Object state flags set at creation (LegoObject flags3 in the original numbering).
 namespace ObjFlag3 {
+constexpr uint32_t CanReinforce = 0x4;         // may reinforce walls (LiveObject_CanReinforceBlock)
 constexpr uint32_t CanTurn = 0x8;              // model has Activity_TurnLeft
 constexpr uint32_t CanYesSir = 0x80;           // answers when selected (SFX_YesSir)
 constexpr uint32_t Selectable = 0x100;         // cleared by Unselectable stats
@@ -32,7 +33,7 @@ constexpr uint32_t CanRouteRubble = 0x10000000;  // model has Activity_RouteRubb
 
 // What a unit is busy doing after arriving somewhere.
 enum class UnitState : uint8_t {
-    Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool
+    Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool, Reinforcing
 };
 
 // A live game object (LegoObject). Grows as the game systems are implemented.

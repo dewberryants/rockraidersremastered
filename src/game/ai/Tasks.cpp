@@ -138,6 +138,18 @@ Task* TaskSystem::CreateDig(const world::Level& level, BlockPos block, bool user
     return t;
 }
 
+Task* TaskSystem::CreateReinforce(const world::Level& level, BlockPos block) {
+    const world::Block& b = level.block(block.x, block.y);
+    if (!(b.flags & world::BlockFlag::Wall) || (b.flags & world::BlockFlag::Reinforced)) return nullptr;
+    for (const auto& t : tasks_)
+        if (t->type == TaskType::Reinforce && t->block == block && !t->remove) return t.get();
+    Task* t = NewTask(tasks_, TaskType::Reinforce, PriorityType::Reinforce,
+                      priorityValue_[size_t(PriorityType::Reinforce)]);
+    t->block = block;
+    // TODO(interface): Map3D_SetBlockHighlight(3) on the block (dig requests are not highlighted yet either).
+    return t;
+}
+
 Task* TaskSystem::CreateClear(BlockPos block) {
     for (const auto& t : tasks_)
         if (t->type == TaskType::Clear && t->block == block && !t->remove) return t.get();
@@ -222,6 +234,8 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
         if (t.singleWidth && !(unit.stats->F1(unit.level) & StatsFlag1::SingleWidthDig)) return false;
         return DrillTime(unit, int(b.terrain)) > 0.0f;
     }
+    case TaskType::Reinforce:
+        return (unit.flags3 & ObjFlag3::CanReinforce) && level.CanReinforce(t.block.x, t.block.y);
     case TaskType::Clear: {
         if (!(unit.stats->F1(unit.level) & StatsFlag1::CanClearRubble)) return false;
         const world::Block& b = level.block(t.block.x, t.block.y);
@@ -240,7 +254,8 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
     if (!objects.BlockOf(unit, from)) return false;
     std::vector<BlockPos> route;
     switch (t.type) {
-    case TaskType::Dig: {
+    case TaskType::Dig:
+    case TaskType::Reinforce: {
         // Approach from a free side; the starting side rotates so units spread around a wall.
         BlockPos approach{-1, -1};
         static const int kDx[4] = {0, 1, 0, -1}, kDy[4] = {-1, 0, 1, 0};
@@ -255,6 +270,10 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         if (approach.x < 0 || !BuildRouteList(level, &unit, from, approach, route)) return false;
         route.push_back(t.block);  // walk on into the wall; movement stops at the face
         if (!objects.RouteBegin(unit, route)) return false;
+        if (t.type == TaskType::Reinforce) {
+            unit.route.back().action = RouteAction::Reinforce;  // LegoObject_TryReinforceBlock
+            break;
+        }
         unit.route.back().action = RouteAction::Drill;
         unit.singleWidthDig = t.singleWidth;
         break;
@@ -454,7 +473,11 @@ void TaskSystem::TaskFinished(GameObject& unit, bool success) {
     if (t->type == TaskType::Dig) {
         // AITask_RemoveWallReferences: every request for the destroyed wall goes.
         for (auto& o : tasks_)
-            if (o->type == TaskType::Dig && o->block == t->block) o->remove = true;
+            if ((o->type == TaskType::Dig || o->type == TaskType::Reinforce) && o->block == t->block) o->remove = true;
+    } else if (t->type == TaskType::Reinforce) {
+        // AITask_RemoveReinforceReferences.
+        for (auto& o : tasks_)
+            if (o->type == TaskType::Reinforce && o->block == t->block) o->remove = true;
     }
 }
 
