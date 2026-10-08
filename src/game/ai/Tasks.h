@@ -104,8 +104,19 @@ public:
 
     Task* TaskOf(const GameObject& unit) const;
     // Gives a task straight to a unit (orders for selected units); false if it cannot start.
+    // A direct order: the unit drops whatever task it held and starts this one.
     bool AssignTo(Task& t, GameObject& unit, ObjectList& objects, world::Level& level) {
-        return !t.assigned && Start(t, unit, objects, level);
+        if (t.assigned) return false;
+        ReleaseUnit(unit);
+        return Start(t, unit, objects, level);
+    }
+    // The unit's tasks go back to the list (it was selected or given another order).
+    void ReleaseUnit(const GameObject& unit) {
+        for (auto& t : tasks_)
+            if (t->assigned == &unit) {
+                t->assigned = nullptr;
+                t->started = false;
+            }
     }
     const std::vector<std::unique_ptr<Task>>& tasks() const { return tasks_; }
 

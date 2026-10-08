@@ -54,7 +54,7 @@ public:
         game.rockFalls.SetStyle(cfg.GetString(Config::Id(game.gameName, levelId_, "RockFallStyle"), ""));
         cheats_ = GetApp().options().cheats;
         objects_.instantDrill = cheats_;
-        infiniteStock_ = cheats_;
+        infiniteStock_ = false;  // F7 turns it on
         LoadObjects(cfg);
         level_.TakeExposedBlocks();  // blocks opened while loading the level are not news
         level_.TakeCavernsDiscovered();
@@ -1019,7 +1019,12 @@ public:
         case MessageType::Select:
             if (m.object && selection_.Select(*m.object)) {
                 GameObject& o = *m.object;
-                if (o.type != ObjType::Building) objects_.RouteEnd(o, false);  // TODO(ai): also drops gather tasks
+                if (o.type != ObjType::Building) {
+                    // Selected units stop and wait for orders: route, work and task are dropped.
+                    objects_.RouteEnd(o, false);
+                    if (o.state != UnitState::Idle) objects_.FinishAction(o, false);
+                    tasks_.ReleaseUnit(o);
+                }
                 GetGame().iconPanel->OpenMenu(UnitMenu(o));
                 // Message_SelectObject: units answer "yes sir" (vehicles only with a driver).
                 // TODO(vehicles): driven vehicles answer too.
@@ -1404,12 +1409,10 @@ public:
         if (cheats_ && game.toolTipFont) {
             r2d.SetAnchor(Anchor::Left);
             game.toolTipFont->Draw(r2d, 4.0f, 200.0f,
-                                   fastForward_ ? "CHEATS (x4)  F1 +10 crystals/ore  F2 max building level"
-                                                : "CHEATS  F1 +10 crystals/ore  F2 max building level");
+                                   "CHEATS  F1 +10 crystals/ore  F2 max building level");
             game.toolTipFont->Draw(r2d, 4.0f, 212.0f, "F3 finish sites  F4 all skills  F5 speed x4");
             game.toolTipFont->Draw(r2d, 4.0f, 224.0f,
-                                   infiniteStock_ ? "F6 open caverns  F7 infinite stock (on)  F12 win level (scripts cannot end it)"
-                                                  : "F6 open caverns  F7 infinite stock (off)  F12 win level");
+                                   "F6 open caverns  F7 infinite stock  F12 win level");
             r2d.SetAnchor(Anchor::Center);
         }
         objective_.Draw(r2d);

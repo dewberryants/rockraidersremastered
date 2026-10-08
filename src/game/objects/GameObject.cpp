@@ -172,7 +172,10 @@ GameObject* ObjectList::PickObject(const Vec3f& origin, const Vec3f& dir, bool (
         if (t <= 0.0f) continue;
         const Vec3f closest = origin + dir * t;
         if (Length(c - closest) > radius) continue;
-        if (!best || t < bestT) {
+        // Units win over the large spheres of buildings they stand beside.
+        const bool building = o.type == ObjType::Building;
+        if (best && building && best->type != ObjType::Building) continue;
+        if (!best || t < bestT || (!building && best->type == ObjType::Building)) {
             best = &o;
             bestT = t;
         }
