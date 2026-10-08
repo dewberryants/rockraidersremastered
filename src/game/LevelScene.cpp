@@ -1019,8 +1019,9 @@ public:
         case MessageType::Select:
             if (m.object && selection_.Select(*m.object)) {
                 GameObject& o = *m.object;
-                if (o.type != ObjType::Building) {
-                    // Selected units stop and wait for orders: route, work and task are dropped.
+                // Message_SelectObject: units stop and wait for orders (route, work and task are
+                // dropped), except while depositing (flags 0x24002000 / 0x100 in the game).
+                if (o.type != ObjType::Building && o.state != UnitState::Depositing) {
                     objects_.RouteEnd(o, false);
                     if (o.state != UnitState::Idle) objects_.FinishAction(o, false);
                     tasks_.ReleaseUnit(o);
