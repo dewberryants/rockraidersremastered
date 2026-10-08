@@ -52,6 +52,8 @@ public:
             RR_WARN("Texture set %s not loaded", set.c_str());
 
         game.rockFalls.SetStyle(cfg.GetString(Config::Id(game.gameName, levelId_, "RockFallStyle"), ""));
+        cheats_ = GetApp().options().cheats;
+        objects_.instantDrill = cheats_;
         LoadObjects(cfg);
         level_.TakeExposedBlocks();  // blocks opened while loading the level are not news
         level_.TakeCavernsDiscovered();
@@ -1120,6 +1122,61 @@ public:
         GetPointers().Update(elapsed);
         messages_.Update([this](const Message& m) { HandleMessage(m); });
         HandleWorldClick(in);
+        if (cheats_) HandleCheatKeys(in);
+        // Debug cheat: the world runs four steps per frame.
+        for (int step = 0; step < (fastForward_ ? 4 : 1); ++step) Simulate(elapsed);
+    }
+
+    // Debug cheats (RockRaiders.ini [debug] cheats=1 or --cheats).
+    void HandleCheatKeys(Input& in) {
+        if (in.KeyPressed(SDL_SCANCODE_F1)) {
+            crystals_ += 10;
+            ore_ += 10;
+            power_.Request();
+        }
+        if (in.KeyPressed(SDL_SCANCODE_F2)) {
+            // Selected buildings (or all of them) to their top level.
+            bool any = false;
+            for (GameObject* u : selection_.units())
+                if (u->type == ObjType::Building && u->stats) {
+                    u->level = u->stats->levels - 1;
+                    any = true;
+                }
+            if (!any)
+                for (const auto& o : objects_.objects())
+                    if (o->type == ObjType::Building && o->stats) o->level = o->stats->levels - 1;
+            power_.Request();
+        }
+        if (in.KeyPressed(SDL_SCANCODE_F3))
+            for (auto& z : zones_) {
+                z->crystalsPlaced = std::max(z->crystalsPlaced, z->crystalsNeeded);
+                z->orePlaced = std::max(z->orePlaced, z->oreNeeded);
+            }
+        if (in.KeyPressed(SDL_SCANCODE_F4)) {
+            // Every skill for the selected raiders (or all of them).
+            bool any = false;
+            for (GameObject* u : selection_.units())
+                if (u->type == ObjType::MiniFigure) {
+                    u->abilities |= Ability::All;
+                    any = true;
+                }
+            if (!any)
+                for (const auto& o : objects_.objects())
+                    if (o->type == ObjType::MiniFigure) o->abilities |= Ability::All;
+        }
+        if (in.KeyPressed(SDL_SCANCODE_F5)) fastForward_ = !fastForward_;
+        if (in.KeyPressed(SDL_SCANCODE_F6)) {
+            for (int y = 0; y < level_.height(); ++y)
+                for (int x = 0; x < level_.width(); ++x)
+                    if (level_.block(x, y).flags & world::BlockFlag::HiddenCavern) level_.UncoverHiddenCavern(x, y);
+        }
+        if (in.KeyPressed(SDL_SCANCODE_F12) && levelStatus_ == 0) {
+            levelStatus_ = 1;
+            objective_.Show(ObjectiveWindow::State::Achieved);
+        }
+    }
+
+    void Simulate(float elapsed) {
         // Debug dig requests wait until their wall has been exposed.
         for (size_t i = 0; i < debugDigs_.size();) {
             const BlockPos b = debugDigs_[i];
@@ -1310,6 +1367,15 @@ public:
             if (!message_.empty() && script_.messageTimer > 0.0f) f->Draw(r2d, 90.0f, 440.0f, message_);
             r2d.SetAnchor(Anchor::Center);
         }
+        if (cheats_ && game.toolTipFont) {
+            r2d.SetAnchor(Anchor::Left);
+            game.toolTipFont->Draw(r2d, 4.0f, 200.0f,
+                                   fastForward_ ? "CHEATS (x4)  F1 +10 crystals/ore  F2 max building level"
+                                                : "CHEATS  F1 +10 crystals/ore  F2 max building level");
+            game.toolTipFont->Draw(r2d, 4.0f, 212.0f, "F3 finish sites  F4 all skills  F5 speed x4");
+            game.toolTipFont->Draw(r2d, 4.0f, 224.0f, "F6 open caverns  F12 win level");
+            r2d.SetAnchor(Anchor::Center);
+        }
         objective_.Draw(r2d);
         // TODO(interface): proper tooltip boxes (ToolTip_*); plain text for now.
         std::string tip = game.panels->hoverToolTip();
@@ -1347,6 +1413,7 @@ private:
     nerps::Runtime script_;
     std::string message_;
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
+    bool cheats_ = false, fastForward_ = false;
     ObjectiveWindow objective_;
     RadarMap radar_;
     PowerGrid power_;

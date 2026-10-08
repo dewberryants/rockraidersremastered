@@ -52,10 +52,10 @@ bool App::Init(const LaunchOptions& launch) {
     Settings& settings = GetSettings();
     const bool haveSettings = settings.Load(exeDir_ / "RockRaiders.ini");
     options_.Read(settings);
-    if (!haveSettings) {
-        options_.Write(settings);
-        settings.Save();
-    }
+    // Write back so options added since the file was made show up in it.
+    options_.Write(settings);
+    if (!settings.Save() && haveSettings) RR_WARN("Could not update RockRaiders.ini");
+    if (launch_.cheats) options_.cheats = true;
     if (launch_.forceWindowed) options_.fullscreen = false;
 
     const fsys::path gameDir = FindGameDir(!launch_.dataDir.empty() ? launch_.dataDir : options_.gameDir, exeDir_);

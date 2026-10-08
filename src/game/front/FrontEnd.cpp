@@ -212,7 +212,8 @@ void FrontEnd::BeginScreen(ScreenType type) {
     opts_.missionSelected = opts_.tutorialSelected = -1;
     opts_.quitGame = 0;
     // TODO(save data): with a current save, missions unlock from its completion flags.
-    UpdateAvailability(missions_, missionGraph_, MissionsMenu(), true);
+    // Debug cheats open every mission.
+    UpdateAvailability(missions_, missionGraph_, MissionsMenu(), !GetApp().options().cheats);
     UpdateAvailability(tutorials_, tutorialGraph_, TutorialsMenu(), false);
 
     MenuSet* set = type == ScreenType::LoadSave ? saveMenu_.get() : mainMenu_.get();

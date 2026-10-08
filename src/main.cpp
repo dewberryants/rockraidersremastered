@@ -22,6 +22,7 @@ int main(int argc, char** argv) {
         else if (next("--input")) launch.inputScript = argv[++i];
         else if (next("--debugcam")) launch.debugCamera = argv[++i];
         else if (next("--startlevel") || next("-startlevel")) launch.startLevel = argv[++i];
+        else if (!std::strcmp(a, "--cheats")) launch.cheats = true;
     }
 
     rr::App& app = rr::GetApp();

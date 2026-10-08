@@ -34,6 +34,7 @@ struct LaunchOptions {
     std::string inputScript;
     // Debug camera override "tiltDegrees,zoom" for overview screenshots.
     std::string debugCamera;
+    bool cheats = false;  // --cheats: same as [debug] cheats=1
 };
 
 class App {

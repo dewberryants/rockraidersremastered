@@ -48,6 +48,8 @@ struct RemasterOptions {
     // Paths
     std::string gameDir;         // empty: auto-detect
     std::string overrideDirs = "Override";  // ';'-separated, relative to the executable
+    // Debug
+    bool cheats = false;         // testing aids: all levels open, instant drilling, F-key cheats
 
     void Read(const Settings& s);
     void Write(Settings& s) const;

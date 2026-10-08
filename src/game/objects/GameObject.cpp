@@ -433,6 +433,7 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
             break;
         }
         if (o.singleWidthDig) time *= 0.5f;
+        if (instantDrill) time = 0.01f;
         if (o.drillSound < 0) {
             const int id = StatSound(o, "Drillsound");
             if (id >= 0) o.drillSound = GetSfx().PlayAt(id, Vec3{o.position.x, o.position.y, o.position.z}, true);

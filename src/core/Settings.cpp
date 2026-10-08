@@ -98,6 +98,7 @@ void RemasterOptions::Read(const Settings& s) {
     tickRate = s.GetInt("game.tickrate", tickRate);
     gameDir = s.GetString("paths.gamedir", gameDir);
     overrideDirs = s.GetString("paths.overridedirs", overrideDirs);
+    cheats = s.GetBool("debug.cheats", cheats);
 }
 
 void RemasterOptions::Write(Settings& s) const {
@@ -110,6 +111,7 @@ void RemasterOptions::Write(Settings& s) const {
     s.SetInt("game.tickrate", tickRate);
     s.Set("paths.gamedir", gameDir);
     s.Set("paths.overridedirs", overrideDirs);
+    s.SetBool("debug.cheats", cheats);
 }
 
 }  // namespace rr

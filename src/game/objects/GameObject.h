@@ -176,6 +176,7 @@ public:
     // Nearest object whose pick sphere the ray passes through (LegoObject_DoPickSphereSelection);
     // with a filter, only objects it accepts.
     GameObject* PickObject(const Vec3f& origin, const Vec3f& dir, bool (*accept)(const GameObject&) = nullptr) const;
+    bool instantDrill = false;  // debug cheat: walls break on the first drill tick
     // LegoObject_SetCrystalPoweredColour: power crystals are drawn in one of these colours
     // (Lego.cfg PowerCrystalRGB / UnpoweredCrystalRGB).
     Vec3f crystalColour{0.0f, 1.0f, 0.0f}, drainedCrystalColour{1.0f, 0.0f, 1.0f};
