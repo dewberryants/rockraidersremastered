@@ -202,15 +202,15 @@ void Renderer3D::BeginFrame(int viewX, int viewY, int viewW, int viewH, const Ma
     for (auto& b : batches_) b.verts.clear();
 }
 
-void Renderer3D::DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, Blend blend) {
+void Renderer3D::DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, Blend blend, bool cull) {
     // Reuse a batch with the same state (batches persist across frames to keep their allocations).
     for (auto& b : batches_) {
-        if (b.texture == texture && b.blend == blend) {
+        if (b.texture == texture && b.blend == blend && b.cull == cull) {
             b.verts.insert(b.verts.end(), verts, verts + count);
             return;
         }
     }
-    batches_.push_back({texture, blend, std::vector<Vertex3D>(verts, verts + count)});
+    batches_.push_back({texture, blend, cull, std::vector<Vertex3D>(verts, verts + count)});
 }
 
 void Renderer3D::EndFrame() {
@@ -264,12 +264,21 @@ void Renderer3D::EndFrame() {
             glBlendFunc(GL_SRC_ALPHA, pass == Blend::Additive ? GL_ONE : GL_ONE_MINUS_SRC_ALPHA);
         for (auto& b : batches_) {
             if (b.verts.empty() || b.blend != pass) continue;
+            // Mesh_SetRenderDesc: CULLMODE CCW (D3D keeps clockwise faces) unless double-sided.
+            if (b.cull) {
+                glEnable(GL_CULL_FACE);
+                glFrontFace(GL_CW);
+                glCullFace(GL_BACK);
+            } else {
+                glDisable(GL_CULL_FACE);
+            }
             glBindTexture(GL_TEXTURE_2D, b.texture ? b.texture->id() : white_);
             glBufferData(GL_ARRAY_BUFFER, GLsizeiptr(b.verts.size() * sizeof(Vertex3D)), b.verts.data(), GL_STREAM_DRAW);
             glDrawArrays(GL_TRIANGLES, 0, GLsizei(b.verts.size()));
         }
     }
     glDepthMask(GL_TRUE);
+    glDisable(GL_CULL_FACE);
     glDisable(GL_BLEND);
     glDisable(GL_DEPTH_TEST);
     glBindVertexArray(0);

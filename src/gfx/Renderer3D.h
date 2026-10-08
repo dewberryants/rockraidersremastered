@@ -69,13 +69,16 @@ public:
     void SetClearColour(const Vec3f& c) { clear_ = c; }
 
     // Queues triangles (3 vertices each). texture may be null (white).
-    void DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, Blend blend = Blend::Opaque);
+    // cull: back faces are skipped (single-sided LightWave surfaces; clockwise is the front).
+    void DrawTriangles(const Texture3D* texture, const Vertex3D* verts, size_t count, Blend blend = Blend::Opaque,
+                       bool cull = false);
     void EndFrame();
 
 private:
     struct Batch {
         const Texture3D* texture;
         Blend blend;
+        bool cull;
         std::vector<Vertex3D> verts;
     };
     unsigned program_ = 0, vao_ = 0, vbo_ = 0, white_ = 0;

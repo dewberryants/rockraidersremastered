@@ -48,7 +48,7 @@ void DrawMesh(Renderer3D& r, const Mesh& mesh, const Mat4& world, float dissolve
         // Additive groups always go to the alpha pass; others only while see-through
         // (Mesh_SetGroupMaterialValues).
         const Blend blend = mat.additive ? Blend::Additive : alpha < 0.999f ? Blend::Alpha : Blend::Opaque;
-        r.DrawTriangles(debugNoTex ? nullptr : mat.texture, tris.data(), tris.size(), blend);
+        r.DrawTriangles(debugNoTex ? nullptr : mat.texture, tris.data(), tris.size(), blend, !mat.doubleSided);
     }
 }
 
