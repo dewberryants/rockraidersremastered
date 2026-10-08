@@ -627,6 +627,11 @@ public:
             }
         }
         if (name == "SetLevelCompleted" || name == "SetLevelFail") {
+            // Debug cheats: only F12 ends the level (cheat stock would meet goals at once).
+            if (cheats_) {
+                RR_INFO("Level script: %s ignored (cheats)", std::string(name).c_str());
+                return 0;
+            }
             levelStatus_ = name == "SetLevelCompleted" ? 1 : 2;
             RR_INFO("Level script: %s", std::string(name).c_str());
             objective_.Show(levelStatus_ == 1 ? ObjectiveWindow::State::Achieved : ObjectiveWindow::State::Failed);
@@ -1382,7 +1387,7 @@ public:
                                                 : "CHEATS  F1 +10 crystals/ore  F2 max building level");
             game.toolTipFont->Draw(r2d, 4.0f, 212.0f, "F3 finish sites  F4 all skills  F5 speed x4");
             game.toolTipFont->Draw(r2d, 4.0f, 224.0f,
-                                   infiniteStock_ ? "F6 open caverns  F7 infinite stock (on)  F12 win level"
+                                   infiniteStock_ ? "F6 open caverns  F7 infinite stock (on)  F12 win level (scripts cannot end it)"
                                                   : "F6 open caverns  F7 infinite stock (off)  F12 win level");
             r2d.SetAnchor(Anchor::Center);
         }
