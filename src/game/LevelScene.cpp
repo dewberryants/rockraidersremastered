@@ -629,7 +629,9 @@ public:
         if (name == "SetLevelCompleted" || name == "SetLevelFail") {
             // Debug cheats: only F12 ends the level (cheat stock would meet goals at once).
             if (cheats_) {
-                RR_INFO("Level script: %s ignored (cheats)", std::string(name).c_str());
+                static bool logged = false;
+                if (!logged) RR_INFO("Level script: %s ignored (cheats)", std::string(name).c_str());
+                logged = true;
                 return 0;
             }
             levelStatus_ = name == "SetLevelCompleted" ? 1 : 2;
@@ -1148,9 +1150,11 @@ public:
                     u->level = u->stats->levels - 1;
                     any = true;
                 }
-            if (!any)
+            if (!any) {
                 for (const auto& o : objects_.objects())
                     if (o->type == ObjType::Building && o->stats) o->level = o->stats->levels - 1;
+                maxBuildingLevels_ = true;  // also for buildings still hidden in caverns
+            }
             power_.Request();
         }
         if (in.KeyPressed(SDL_SCANCODE_F3))
@@ -1190,6 +1194,20 @@ public:
     }
 
     void Simulate(float elapsed) {
+        // RR_DEBUG_TRAIN="tick,ability": the first raider is sent to train at that tick.
+        if (const char* tr = std::getenv("RR_DEBUG_TRAIN")) {
+            const auto parts = SplitTokens(tr, ",");
+            if (parts.size() == 2 && ++debugTrainTick_ == std::atoi(std::string(parts[0]).c_str())) {
+                const uint32_t ab = uint32_t(std::atoi(std::string(parts[1]).c_str()));
+                for (const auto& o : objects_.objects())
+                    if (o->type == ObjType::MiniFigure && !o->removed) {
+                        GameObject* trainer = NearestTrainer(*o, ab);
+                        RR_INFO("Debug train: trainer %p", static_cast<void*>(trainer));
+                        if (trainer) tasks_.CreateTrain(*trainer, ab, o.get());
+                        break;
+                    }
+            }
+        }
         // Debug dig requests wait until their wall has been exposed.
         for (size_t i = 0; i < debugDigs_.size();) {
             const BlockPos b = debugDigs_[i];
@@ -1221,7 +1239,10 @@ public:
         for (const auto& [bx, by] : level_.TakeExposedBlocks())
             for (GameObject* o : objects_.ExposeBlock(bx, by)) {
                 ++hiddenObjectsFound_;  // NERPsRuntime_IncHiddenObjectsFound
-                if (o->type == ObjType::Building) power_.Request();
+                if (o->type == ObjType::Building) {
+                    if (maxBuildingLevels_ && o->stats) o->level = o->stats->levels - 1;
+                    power_.Request();
+                }
                 if (o->type == ObjType::PowerCrystal || o->type == ObjType::Ore) tasks_.CreateCollect(*o);
             }
         if (int n = level_.TakeCavernsDiscovered()) RR_INFO("%d hidden cavern(s) discovered", n);
@@ -1429,6 +1450,8 @@ private:
     std::string message_;
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
     bool cheats_ = false, fastForward_ = false, infiniteStock_ = false;
+    int debugTrainTick_ = 0;
+    bool maxBuildingLevels_ = false;  // cheat F2 without a selection
     ObjectiveWindow objective_;
     RadarMap radar_;
     PowerGrid power_;
