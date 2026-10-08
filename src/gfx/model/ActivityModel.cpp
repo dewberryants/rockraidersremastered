@@ -1,10 +1,13 @@
 #include "gfx/model/ActivityModel.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 
 #include "config/Config.h"
 #include "core/Log.h"
 #include "fs/Path.h"
+#include "gfx/model/Mesh.h"
 
 namespace rr {
 
@@ -33,6 +36,28 @@ std::shared_ptr<ActivityModel> LoadActivityModel(const std::string& folder, cons
     model->carryNull = ae.GetString("Lego*::CarryNullName", "");
     model->depositNull = ae.GetString("Lego*::DepositNullName", "");
     model->toolNull = ae.GetString("Lego*::ToolNullName", "");
+    model->wheelNull = ae.GetString("Lego*::WheelNullName", "");
+    model->driverNull = ae.GetString("Lego*::DriverNullName", "");
+    model->wheelRadius = ae.GetFloat("Lego*::WheelRadius").value_or(0.0f);
+    if (const std::string wheel = ae.GetString("Lego*::WheelMesh", ""); !wheel.empty())
+        model->wheelMesh = LoadLwo(folder + "\\" + wheel);
+    for (uint32_t lv = 0; lv < 16; ++lv) {
+        char id[64];
+        std::snprintf(id, sizeof(id), "Lego*::Upgrades::Level%u%u%u%u", (lv >> 3) & 1, (lv >> 2) & 1, (lv >> 1) & 1,
+                      lv & 1);
+        for (Config::ItemRef it = ae.FindArray(id); it != Config::kNone; it = ae.Next(it)) {
+            // "sbucket  normal_bucket_null,1[,parentPart]"
+            const auto t = SplitTokens(ae.item(it).value, ",");
+            if (t.size() < 2) continue;
+            ActivityModel::UpgradePart p;
+            p.levels = lv;
+            p.part = ae.item(it).key;
+            p.nullName = std::string(t[0]);
+            p.instance = std::max(0, std::atoi(std::string(t[1]).c_str()) - 1);
+            if (t.size() > 2) p.parent = std::string(t[2]);
+            model->upgrades.push_back(std::move(p));
+        }
+    }
     model->shape.emplace_back(0, 0);
     if (auto shape = ae.GetString("Lego*::Shape")) {
         for (std::string_view pt : SplitTokens(*shape, ":")) {

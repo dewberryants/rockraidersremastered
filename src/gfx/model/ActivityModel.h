@@ -25,6 +25,18 @@ struct ActivityModel {
     std::string folder;        // e.g. "Mini-Figures\Pilot"
     float scale = 1.0f;
     std::string cameraNull, drillNull, carryNull, depositNull, toolNull;
+    // Vehicles (Vehicle_Load): a wheel mesh on each wheel null (up to six), the driver's seat,
+    // and upgrade parts per upgrade level (Upgrade_Load: "Upgrades::LevelABCD", one bit each for
+    // engine, drill, scan and carry).
+    std::shared_ptr<Mesh> wheelMesh;
+    std::string wheelNull, driverNull;
+    float wheelRadius = 0.0f;
+    struct UpgradePart {
+        uint32_t levels = 0;  // the upgrade level the part belongs to
+        std::string part, nullName, parent;
+        int instance = 0;     // which of the nulls with that name (0 = first)
+    };
+    std::vector<UpgradePart> upgrades;
     // Building footprint in blocks relative to the origin (always first); a point listed twice
     // in a row is the building's path tile.
     std::vector<std::pair<int, int>> shape;

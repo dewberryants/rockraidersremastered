@@ -92,6 +92,11 @@ struct GameObject {
     bool triggered = false;                // the animation passed its TRIGGER frame this tick
     uint32_t abilities = 0;                // trained skills (Ability)
     bool ticking = false;                  // dynamite: lit, explodes when TickDown ends
+    // Vehicles.
+    GameObject* driver = nullptr;          // the minifigure driving it (null: unmanned)
+    uint32_t upgradeLevel = 0;             // Upgrade level bits (engine, drill, scan, carry)
+    float wheelSpin = 0.0f;                // wheel rotation (distance / wheel radius)
+    Vec2 lastPos;
     BlockPos dynamiteTarget{-1, -1};       // dynamite: the wall it blows up
     float trainTimer = 0.0f;               // time since the last training (LegoObject_UpdateElapsedTimes)
     bool crystalDrained = false;           // power crystal used up (UnpoweredCrystalRGB)
@@ -212,6 +217,8 @@ public:
 
 private:
     void PlaySceneSounds(const LwsScene& scene, bool loop, float t0, float t1, const Vec3f& at);
+    void DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsScene& scene, const LwsPose& pose,
+                          const Mat4& world) const;
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);
     void UpdateAction(GameObject& o, float elapsed);

@@ -108,6 +108,17 @@ public:
         if (const char* lvl = std::getenv("RR_DEBUG_BUILDLEVEL"))
             for (const auto& o : objects_.objects())
                 if (o->type == ObjType::Building) o->level = std::atoi(lvl);
+        // RR_DEBUG_SPAWN="Type,x,y;..." places objects (vehicles...) on blocks.
+        if (const char* sp = std::getenv("RR_DEBUG_SPAWN")) {
+            for (std::string_view entry : SplitTokens(sp, ";")) {
+                const auto f = SplitTokens(entry, ",");
+                if (f.size() != 3) continue;
+                const ObjectTypeInfo* info = GetObjectRegistry().Find(f[0]);
+                const Vec2 c = level_.map().BlockCentre(std::atoi(std::string(f[1]).c_str()),
+                                                        std::atoi(std::string(f[2]).c_str()));
+                if (info) objects_.Spawn(*info, c.x, c.y);
+            }
+        }
         // RR_DEBUG_LAYPATH="x,y;..." lays power paths to be built.
         if (const char* laid = std::getenv("RR_DEBUG_LAYPATH")) {
             for (std::string_view entry : SplitTokens(laid, ";")) {
@@ -817,10 +828,13 @@ public:
     // Building placement (SelectPlace): the footprint follows the block under the cursor, facing
     // the camera (Lego_TryTeleportObject picks the direction from the camera's orientation).
     void BeginPlacement(const ObjectTypeInfo& type) {
-        if (type.type != ObjType::Building) {
-            RR_INFO("Ordering %s: vehicles are not implemented yet", type.name.c_str());  // TODO(vehicles)
+        if (type.type == ObjType::Vehicle) {
+            // Lego_TryTeleportObject: the vehicle waits for a teleporter of its class.
+            if (teleportQueue_.size() < kMaxTeleportQueue) teleportQueue_.push_back(&type);
+            GetGame().iconPanel->BackToMain();
             return;
         }
+        if (type.type != ObjType::Building) return;
         placing_ = &type;
         GetGame().iconPanel->BackToMain();
     }
@@ -1115,7 +1129,9 @@ public:
     static MenuType UnitMenu(const GameObject& o) {
         switch (o.type) {
         case ObjType::MiniFigure: return MenuType::LegoMan;
-        case ObjType::Vehicle: return MenuType::Vehicle;  // TODO(vehicles): water / unmanned variants
+        case ObjType::Vehicle:
+            // TODO(vehicles): water vehicles have their own menu.
+            return o.driver ? MenuType::Vehicle : MenuType::UnmannedVehicle;
         case ObjType::Building: return MenuType::Building;
         case ObjType::ElectricFence: return MenuType::ElectricFence;
         default: return MenuType::Main;

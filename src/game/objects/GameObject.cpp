@@ -9,6 +9,7 @@
 #include "core/Random.h"
 #include "fs/Path.h"
 #include "game/Construction.h"
+#include "game/objects/ObjectRegistry.h"
 #include "game/Sfx.h"
 #include "game/ai/Tasks.h"
 #include "game/world/Level.h"
@@ -252,6 +253,12 @@ void ObjectList::Update(float elapsed) {
         GameObject& o = *op;
         if (o.removed) continue;
         if (o.type == ObjType::MiniFigure) o.trainTimer += elapsed;
+        if (o.type == ObjType::Vehicle) {
+            const float dx = o.position.x - o.lastPos.x, dy = o.position.y - o.lastPos.y;
+            const ActivityModel* am = o.info ? o.info->model.activities.get() : nullptr;
+            if (am && am->wheelRadius > 0.0f) o.wheelSpin += std::sqrt(dx * dx + dy * dy) / am->wheelRadius;
+            o.lastPos = {o.position.x, o.position.y};
+        }
         o.UpdateActivityChange();
         const Activity* before = o.anim;
         const bool fresh = o.animFresh;
@@ -789,6 +796,7 @@ void ObjectList::Draw(Renderer3D& r) const {
             if (o.anim) {
                 EvaluateLws(*o.anim->scene, o.animTime, o.anim->looping, pose);
                 DrawPose(r, *o.anim->scene, pose, world);
+                if (o.type == ObjType::Vehicle) DrawVehicleParts(r, o, *o.anim->scene, pose, world);
             }
             if (o.anim2 && m.secondPart) {
                 EvaluateLws(*o.anim2->scene, o.animTime2, o.anim2->looping, pose);
@@ -799,6 +807,59 @@ void ObjectList::Draw(Renderer3D& r) const {
             DrawPose(r, *m.scene, pose, ObjectMatrix(o.position, o.heading + o.spin), tint);
         } else if (m.mesh) {
             DrawMesh(r, *m.mesh, ObjectMatrix(o.position, o.heading + o.spin), 0.0f, tint);
+        }
+    }
+}
+
+void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsScene& scene, const LwsPose& pose,
+                                  const Mat4& world) const {
+    const ActivityModel& am = *o.info->model.activities;
+    // The world matrix of the n-th node with a name (Container_FormatPartName + SearchTree).
+    auto nodeWorld = [&](const std::string& name, int instance, Mat4& out) {
+        int seen = 0;
+        for (size_t i = 0; i < scene.nodes.size() && i < pose.world.size(); ++i) {
+            if (!EqualsNoCase(scene.nodes[i].name, name)) continue;
+            if (seen++ == instance) {
+                out = world * pose.world[i];
+                return true;
+            }
+        }
+        return false;
+    };
+    // Vehicle_PopulateWheelNulls: up to six wheels, turning with the distance driven.
+    // TODO(vehicles): wheels follow the ground and tilt the body (Vehicle_SetPosition).
+    if (am.wheelMesh && !am.wheelNull.empty()) {
+        Mat4 spin;
+        const float c = std::cos(o.wheelSpin), s = std::sin(o.wheelSpin);
+        spin.m[5] = c; spin.m[6] = s; spin.m[9] = -s; spin.m[10] = c;
+        for (int w = 0; w < 6; ++w) {
+            Mat4 mw;
+            if (!nodeWorld(am.wheelNull, w, mw)) break;
+            DrawMesh(r, *am.wheelMesh, mw * spin);
+        }
+    }
+    // Upgrade parts of the current upgrade level on their nulls.
+    // TODO(vehicles): parts hanging off other parts (third value), part animations.
+    for (const ActivityModel::UpgradePart& p : am.upgrades) {
+        if (p.levels != o.upgradeLevel || !p.parent.empty()) continue;
+        Mat4 mp;
+        if (!nodeWorld(p.nullName, p.instance, mp) && !nodeWorld(p.nullName, 0, mp)) continue;
+        const ObjectTypeInfo* part = GetObjectRegistry().Find(p.part);
+        if (!part) continue;
+        const ObjectModel& pm = part->model;
+        if (pm.mesh) {
+            DrawMesh(r, *pm.mesh, mp);
+        } else if (pm.activities) {
+            const Activity* st = pm.activities->Find("Activity_Stand");
+            if (st && st->scene) {
+                LwsPose pp;
+                EvaluateLws(*st->scene, o.animTime, true, pp);
+                DrawPose(r, *st->scene, pp, mp);
+            }
+        } else if (pm.scene) {
+            LwsPose pp;
+            EvaluateLws(*pm.scene, o.animTime, true, pp);
+            DrawPose(r, *pm.scene, pp, mp);
         }
     }
 }
