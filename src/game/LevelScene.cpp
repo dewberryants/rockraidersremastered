@@ -136,6 +136,7 @@ public:
         IconPanel& panel = *game.iconPanel;
         panel.BackToMain();
         panel.isEnabled = [this](MenuItem item) { return ItemEnabled(item); };
+        panel.onBackToMain = [this] { messages_.Post(MessageType::ClearSelection); };
         panel.onPanelMenu = [](MenuType m, bool open) {
             if (m == MenuType::Priorities) GetGame().panels->SetOpen(PanelType::PriorityList, open);
             // TODO(interface): the encyclopedia panel.
@@ -275,16 +276,16 @@ public:
         if (!in.leftReleased() && !in.rightReleased()) return;
         if (in.rightReleased()) {
             // TODO(interface): right-click handling of the original (menus, cancel).
-            messages_.Post(MessageType::ClearSelection);
+            panel.BackToMain();
             return;
         }
         Vec3f origin, dir;
         MouseRay(in.mouseX(), in.mouseY(), origin, dir);
         // Objects that can't be selected (crystals, ore...) don't take the click from the block behind.
         if (GameObject* o = objects_.PickObject(origin, dir, &Selection::IsSelectable)) {
+            // The unit's menu opens when the selection is made (after the clear).
             messages_.Post(MessageType::ClearSelection);
             messages_.Post(MessageType::Select, o);
-            panel.OpenMenu(UnitMenu(*o));
             return;
         }
         BlockPos b;
@@ -1009,6 +1010,7 @@ public:
             if (m.object && selection_.Select(*m.object)) {
                 GameObject& o = *m.object;
                 if (o.type != ObjType::Building) objects_.RouteEnd(o, false);  // TODO(ai): also drops gather tasks
+                GetGame().iconPanel->OpenMenu(UnitMenu(o));
                 // Message_SelectObject: units answer "yes sir" (vehicles only with a driver).
                 // TODO(vehicles): driven vehicles answer too.
                 int sfx = 0;
@@ -1019,8 +1021,9 @@ public:
             }
             break;
         case MessageType::ClearSelection:
+            // Message_ClearSelectedUnits; menus return to Main through Interface_BackToMain, which
+            // posts this message.
             selection_.Clear();
-            GetGame().iconPanel->BackToMain();
             break;
         case MessageType::Deselect:
             if (m.object) selection_.Deselect(*m.object);

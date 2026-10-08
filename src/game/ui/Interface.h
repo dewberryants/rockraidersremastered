@@ -63,7 +63,12 @@ public:
     // Interface_OpenMenu: the current menu slides off to the right, the new one comes back on
     // (_Interface_OpenMenu_SetNext). Reopening the shown menu only updates the block.
     void OpenMenu(MenuType menu, const BlockPos* block = nullptr);
-    void BackToMain() { OpenMenu(MenuType::Main); }
+    // Interface_BackToMain: also clears the unit selection (onBackToMain).
+    void BackToMain() {
+        if (onBackToMain) onBackToMain();
+        OpenMenu(MenuType::Main);
+    }
+    std::function<void()> onBackToMain;
     MenuType menu() const { return menu_; }
     // Interface_FUN_0041e9f0: advances the slide by the unscaled frame time.
     void Update(float elapsedAbs);
