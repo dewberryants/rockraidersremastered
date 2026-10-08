@@ -54,6 +54,7 @@ public:
         game.rockFalls.SetStyle(cfg.GetString(Config::Id(game.gameName, levelId_, "RockFallStyle"), ""));
         cheats_ = GetApp().options().cheats;
         objects_.instantDrill = cheats_;
+        infiniteStock_ = cheats_;
         LoadObjects(cfg);
         level_.TakeExposedBlocks();  // blocks opened while loading the level are not news
         level_.TakeCavernsDiscovered();
@@ -1165,6 +1166,13 @@ public:
                     if (o->type == ObjType::MiniFigure) o->abilities |= Ability::All;
         }
         if (in.KeyPressed(SDL_SCANCODE_F5)) fastForward_ = !fastForward_;
+        if (in.KeyPressed(SDL_SCANCODE_F7)) infiniteStock_ = !infiniteStock_;
+        if (infiniteStock_ && (crystals_ < 50 || ore_ < 50)) {
+            // Storage never runs low.
+            crystals_ = std::max(crystals_, 99);
+            ore_ = std::max(ore_, 99);
+            power_.Request();
+        }
         if (in.KeyPressed(SDL_SCANCODE_F6)) {
             for (int y = 0; y < level_.height(); ++y)
                 for (int x = 0; x < level_.width(); ++x)
@@ -1373,7 +1381,9 @@ public:
                                    fastForward_ ? "CHEATS (x4)  F1 +10 crystals/ore  F2 max building level"
                                                 : "CHEATS  F1 +10 crystals/ore  F2 max building level");
             game.toolTipFont->Draw(r2d, 4.0f, 212.0f, "F3 finish sites  F4 all skills  F5 speed x4");
-            game.toolTipFont->Draw(r2d, 4.0f, 224.0f, "F6 open caverns  F12 win level");
+            game.toolTipFont->Draw(r2d, 4.0f, 224.0f,
+                                   infiniteStock_ ? "F6 open caverns  F7 infinite stock (on)  F12 win level"
+                                                  : "F6 open caverns  F7 infinite stock (off)  F12 win level");
             r2d.SetAnchor(Anchor::Center);
         }
         objective_.Draw(r2d);
@@ -1413,7 +1423,7 @@ private:
     nerps::Runtime script_;
     std::string message_;
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
-    bool cheats_ = false, fastForward_ = false;
+    bool cheats_ = false, fastForward_ = false, infiniteStock_ = false;
     ObjectiveWindow objective_;
     RadarMap radar_;
     PowerGrid power_;
