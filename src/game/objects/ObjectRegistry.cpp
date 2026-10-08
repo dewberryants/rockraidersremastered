@@ -55,6 +55,7 @@ const MiscEntry kMisc[] = {
     {"Pusher", ModelKind::Lws, ObjType::Pusher, 0},
     {"Freezer", ModelKind::Lws, ObjType::Freezer, 0},
     {"LaserShot", ModelKind::Lws, ObjType::LaserShot, 0},
+    {"Explosion", ModelKind::Lws, ObjType::None, 0},
 };
 }  // namespace
 

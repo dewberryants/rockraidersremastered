@@ -49,4 +49,23 @@ private:
     size_t current_ = 0;
 };
 
+// A one-shot scene played where something happened (Effect_Spawn_Explosion): at most four at
+// once, each removed when its animation ends.
+class SceneEffect {
+public:
+    void SetScene(std::shared_ptr<LwsScene> scene) { scene_ = std::move(scene); }
+    void Spawn(const Vec3f& pos);
+    void Update(float elapsed);
+    void Draw(Renderer3D& r) const;
+    void StopAll() { live_.clear(); }
+
+private:
+    struct Instance {
+        Vec3f pos;
+        float time = 0.0f;
+    };
+    std::shared_ptr<LwsScene> scene_;
+    std::vector<Instance> live_;
+};
+
 }  // namespace rr

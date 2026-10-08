@@ -347,6 +347,13 @@ bool Level::CanReinforce(int x, int y) const {
            b.terrain != Terrain::OreSeam && b.terrain != Terrain::CrystalSeam;
 }
 
+bool Level::CanDynamite(int x, int y) const {
+    if (x <= 0 || y <= 0 || x >= width_ - 2 || y >= height_ - 2) return false;
+    const Block& b = block(x, y);
+    return (b.flags & BlockFlag::Wall) && !(b.flags & BlockFlag::OuterCorner) && !(b.flags & BlockFlag::Ground) &&
+           b.terrain != Terrain::Immovable && b.terrain != Terrain::RechargeSeam && b.terrain != Terrain::Water;
+}
+
 bool Level::ReinforceBlock(int x, int y) {
     Block& b = block(x, y);
     if (!(b.flags & BlockFlag::Wall) ||

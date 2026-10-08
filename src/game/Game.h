@@ -36,6 +36,7 @@ struct Game {
     std::unique_ptr<PriorityPanel> priorities;  // priority list contents (Priorities_LoadImages)
     Dependencies dependencies;             // build requirements (Dependencies_Initialise)
     RockFallEffects rockFalls;             // wall collapse scenes (Effect_Load_RockFallStylesAll)
+    SceneEffect explosions;                // dynamite explosions (MiscObjects Explosion)
 
     bool introsDone = false;
     std::string selectedLevel;  // "Levels::Tutorial01" when a level was chosen

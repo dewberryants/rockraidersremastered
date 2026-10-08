@@ -1,5 +1,6 @@
 #include "game/Effects.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include "config/Config.h"
@@ -80,6 +81,27 @@ void RockFallEffects::Draw(Renderer3D& r) const {
             EvaluateLws(*s.scenes[t], in.time, false, pose);
             DrawPose(r, *s.scenes[t], pose, ObjectMatrix(in.pos, in.heading));
         }
+    }
+}
+
+void SceneEffect::Spawn(const Vec3f& pos) {
+    if (!scene_ || live_.size() >= 4) return;
+    live_.push_back({pos, 0.0f});
+}
+
+void SceneEffect::Update(float elapsed) {
+    if (!scene_) return;
+    const float frames = float(scene_->frameCount());
+    for (Instance& in : live_) in.time += elapsed;
+    live_.erase(std::remove_if(live_.begin(), live_.end(), [&](const Instance& in) { return in.time > frames; }),
+                live_.end());
+}
+
+void SceneEffect::Draw(Renderer3D& r) const {
+    static LwsPose pose;
+    for (const Instance& in : live_) {
+        EvaluateLws(*scene_, in.time, false, pose);
+        DrawPose(r, *scene_, pose, ObjectMatrix(in.pos, 0.0f));
     }
 }
 

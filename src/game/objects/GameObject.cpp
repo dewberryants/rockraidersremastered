@@ -96,6 +96,16 @@ void GameObject::EquipTool(ToolType t) {
     tools.push_back(t);
 }
 
+bool GameObject::PlayNamedAnim(std::string_view name) {
+    if (!info || !info->model.activities) return false;
+    const Activity* a = info->model.activities->Find(name);
+    if (!a) return false;
+    anim = a;
+    animTime = 0.0f;
+    animFresh = true;
+    return true;
+}
+
 void GameObject::Face(Vec2 dir) {
     if (dir.x == 0.0f && dir.y == 0.0f) return;
     const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
@@ -222,6 +232,7 @@ GameObject* ObjectList::Create(const ObjectTypeInfo& info) {
     o.UpdateActivityChange();
     if (o.stats && (o.stats->F2(o.level) & StatsFlag2::Unselectable)) o.flags3 &= ~ObjFlag3::Selectable;
     if (o.type == ObjType::MiniFigure) o.EquipTool(ToolType::Drill);  // every Rock Raider starts with a drill
+    if (!o.anim) o.PlayNamedAnim("Normal");  // dynamite and other named-activity objects
     // TODO(objects): tools, flocks, power grid, AI tasks for buildings/monsters, counts per type.
 
     objects_.push_back(std::move(obj));
@@ -256,6 +267,13 @@ void ObjectList::Update(float elapsed) {
             // LegoObject_TriggerFrameCallback: the activity's TRIGGER frame was passed.
             o.triggered = o.anim->trigger > 0 &&
                           FramePassed(float(o.anim->trigger), t0, o.animTime, o.anim->looping, frames);
+        }
+        // LegoObject_SimpleObject_MoveAnimation: lit dynamite goes off when TickDown ends.
+        if (o.type == ObjType::Dynamite && o.ticking && o.anim && o.anim->scene &&
+            o.animTime >= float(o.anim->scene->frameCount())) {
+            o.ticking = false;
+            if (onExplode) onExplode(o);
+            continue;
         }
         if (o.teleportingIn) {
             // Arrived once the beam-in animation has played through.
@@ -340,6 +358,10 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         // Four hammer blows (Lego.cfg ReinforceHits, default 4).
         o.state = UnitState::Reinforcing;
         o.SetActivity(ActivityType::Reinforce, kReinforceHits);
+        break;
+    case RouteAction::PlaceDynamite:
+        o.state = UnitState::PlacingDynamite;
+        o.SetActivity(ActivityType::Place);
         break;
     case RouteAction::Train:
         // Arrival flag 0x400: Activity_Train plays once; the skill is granted at its end.
@@ -459,6 +481,26 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         break;
     case UnitState::Training:
         if (o.animOverrun > 0.0f) FinishAction(o, true);
+        break;
+    case UnitState::PlacingDynamite:
+        // The dynamite is set down before the wall and lit (TickDown).
+        if (o.triggered && o.carried) PlacedSound(*o.carried);
+        if (o.animOverrun > 0.0f) {
+            GameObject* item = o.carried;
+            if (!item || item->type != ObjType::Dynamite) {
+                FinishAction(o, false);
+                break;
+            }
+            o.carried = nullptr;
+            item->carrier = nullptr;
+            item->position = {o.position.x + o.faceDir.x * 6.0f, o.position.y + o.faceDir.y * 6.0f, 0.0f};
+            item->position.z = level.map().WorldZ(item->position.x, item->position.y);
+            item->heading = o.heading;
+            item->ticking = true;
+            item->dynamiteTarget = o.stateBlock;
+            item->PlayNamedAnim("TickDown");
+            FinishAction(o, true);
+        }
         break;
     case UnitState::Clearing:
         if (o.animOverrun > 0.0f) {
@@ -716,7 +758,8 @@ void ObjectList::UpdateMovement(GameObject& o, float elapsed) {
     // Heading into a wall to drill or reinforce it: stop once the unit reaches the wall block.
     // TODO(drilling): use the model's drill null instead of a reach from the collision radius.
     const RouteNode& last = o.route.back();
-    if ((last.action == RouteAction::Drill || last.action == RouteAction::Reinforce) &&
+    if ((last.action == RouteAction::Drill || last.action == RouteAction::Reinforce ||
+         last.action == RouteAction::PlaceDynamite) &&
         size_t(o.routeIndex) + 1 >= o.route.size()) {
         const float reach = (o.stats ? o.stats->Num("CollRadius", o.level, 5.0f) : 5.0f) * 1.5f;
         BlockPos tip;

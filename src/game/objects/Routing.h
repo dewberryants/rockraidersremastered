@@ -64,6 +64,7 @@ constexpr uint8_t None = 0, Drill = 1, Reinforce = 2, Collect = 3, Clear = 4, Th
 constexpr uint8_t Fetch = 100;      // ours: take a resource out of a storage building
 constexpr uint8_t BuildPath = 101;  // ours: turn a laid path into a power path
 constexpr uint8_t GetTool = 102;    // ours: pick up a tool at a tool store
+constexpr uint8_t PlaceDynamite = 103;  // ours: put carried dynamite down at a wall (game: action 9)
 }
 namespace RouteFlag {
 // The unit arrives moving along a fixed direction, given in the low two bits:

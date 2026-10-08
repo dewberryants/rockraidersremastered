@@ -108,6 +108,9 @@ public:
     // LiveObject_CanReinforceBlock (without a unit): an exposed wall inside the border that is
     // not reinforced yet and not a seam.
     bool CanReinforce(int x, int y) const;
+    // LiveObject_CanDynamiteBlockPos: a wall inside the border, not an outer corner, immovable
+    // rock, water or a recharge seam.
+    bool CanDynamite(int x, int y) const;
     // Level_Block_Reinforce: straight walls take the reinforcement; corners never do.
     bool ReinforceBlock(int x, int y);
     // Opens a hidden cavern from block (x, y): a wave over the 8 neighbours reaches every

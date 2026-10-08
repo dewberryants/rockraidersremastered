@@ -189,6 +189,14 @@ Task* TaskSystem::CreateReinforce(const world::Level& level, BlockPos block) {
     return t;
 }
 
+Task* TaskSystem::CreateDynamite(BlockPos wall, GameObject& dynamite) {
+    Task* t = NewTask(tasks_, TaskType::Dynamite, PriorityType::Destruction,
+                      priorityValue_[size_t(PriorityType::Destruction)]);
+    t->block = wall;
+    t->target = &dynamite;
+    return t;
+}
+
 Task* TaskSystem::CreateTrain(GameObject& building, uint32_t ability, GameObject* forUnit) {
     // The task's priority class follows the skill.
     PriorityType p = PriorityType::Upgrade;
@@ -320,6 +328,9 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
     case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
     case TaskType::GetTool: return t.tool != ToolType::Count && !unit.HasTool(t.tool);
     case TaskType::Train: return t.target && !t.target->removed && !(unit.abilities & t.ability);
+    case TaskType::Dynamite:
+        return (unit.abilities & Ability::Dynamite) && t.target && !t.target->removed && !t.target->ticking &&
+               (!t.target->carrier || t.target->carrier == &unit) && level.CanDynamite(t.block.x, t.block.y);
     default: return false;
     }
 }
@@ -329,6 +340,18 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
     if (!objects.BlockOf(unit, from)) return false;
     std::vector<BlockPos> route;
     switch (t.type) {
+    case TaskType::Dynamite:
+        if (unit.carried != t.target) {
+            // First collect the dynamite where the tool store handed it out.
+            BlockPos tb;
+            if (!t.target || !objects.BlockOf(*t.target, tb)) return false;
+            const Vec2 at{t.target->position.x, t.target->position.y};
+            if (!RouteBlocks(level, unit, from, tb, route) || !objects.RouteBegin(unit, route, &at)) return false;
+            unit.route.back().action = RouteAction::Collect;
+            unit.stateTarget = t.target;
+            break;
+        }
+        [[fallthrough]];  // carrying it: off to the wall (LegoObject_TryDynamite)
     case TaskType::Dig:
     case TaskType::Reinforce: {
         // Approach from a free side; the starting side rotates so units spread around a wall.
@@ -347,6 +370,10 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         if (!objects.RouteBegin(unit, route)) return false;
         if (t.type == TaskType::Reinforce) {
             unit.route.back().action = RouteAction::Reinforce;  // LegoObject_TryReinforceBlock
+            break;
+        }
+        if (t.type == TaskType::Dynamite) {
+            unit.route.back().action = RouteAction::PlaceDynamite;
             break;
         }
         unit.route.back().action = RouteAction::Drill;

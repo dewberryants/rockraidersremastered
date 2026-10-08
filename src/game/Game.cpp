@@ -43,6 +43,7 @@ bool Game::Initialise(const Config& cfg) {
     priorities->Load(cfg, gameName);
     dependencies.Load(cfg, gameName);
     rockFalls.Load(cfg, gameName);
+    if (const ObjectModel* m = GetObjectRegistry().Misc("Explosion")) explosions.SetScene(m->scene);
     RR_INFO("Object models loaded in %llu ms", (unsigned long long)(SDL_GetTicks64() - t0));
 
     if (cfg.GetBool(Id("Main", "FrontEnd")) == BoolTri::True) {

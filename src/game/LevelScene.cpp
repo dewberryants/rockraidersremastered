@@ -65,6 +65,7 @@ public:
         objects_.onFetch = [this](GameObject& u) { return FetchFromStore(u); };
         objects_.onPlace = [this](GameObject& u, GameObject& item) { PlaceOnSite(u, item); };
         objects_.onBuildPath = [this](GameObject&, BlockPos b) { FinishPath(b); };
+        objects_.onExplode = [this](GameObject& d) { ExplodeDynamite(d); };
         tasks_.hasStock = [this](ObjType t) { return t == ObjType::PowerCrystal ? crystals_ > 0 : ore_ > 0; };
         tasks_.zoneBlock = [this](int zone, BlockPos& b) {
             for (const auto& z : zones_)
@@ -153,6 +154,8 @@ public:
             return cfg.GetRGB(game.Id("Main", key), r, g, b) ? Vec3f{r, g, b} : fallback;
         };
         ambient_ = rgb("AmbientRGB", {0.04f, 0.04f, 0.04f});
+        dynamiteDamageRadius_ = cfg.GetFloat(game.Id("Main", "DynamiteDamageRadius")).value_or(75.0f);
+        dynamiteMaxDamage_ = cfg.GetFloat(game.Id("Main", "DynamiteMaxDamage")).value_or(150.0f);
         objects_.crystalColour = rgb("PowerCrystalRGB", {0.0f, 1.0f, 0.0f});
         objects_.drainedCrystalColour = rgb("UnpoweredCrystalRGB", {1.0f, 0.0f, 1.0f});
         topSpot_ = rgb("TopSpotRGB", {0.5f, 0.5f, 0.5f});
@@ -380,6 +383,19 @@ public:
             // Hard rock needs a unit that can drill it; immovable rock never.
             return blk.terrain != world::Terrain::Immovable && !(blk.flags & world::BlockFlag::Ground);
         case MenuItem::ClearRubble: return (blk.flags & world::BlockFlag::Ground) && !(blk.flags & world::BlockFlag::CleanFloor);
+        case MenuItem::Dynamite: {
+            // A blastable wall, a tool store to hand out dynamite and someone trained to use it.
+            if (!level_.CanDynamite(b.x, b.y) || tasks_.HasBlockTask(b, TaskType::Dynamite) || !NearestToolStore(b))
+                return false;
+            if (!selection_.empty()) {
+                for (GameObject* u : selection_.units())
+                    if (u->abilities & Ability::Dynamite) return true;
+                return false;
+            }
+            for (const auto& o : objects_.objects())
+                if (!o->removed && o->type == ObjType::MiniFigure && (o->abilities & Ability::Dynamite)) return true;
+            return false;
+        }
         case MenuItem::Reinforce: {
             // Interface_GetItemStatus (Reinforce): a straight, unreinforced wall not beside a
             // building, and someone able to do it (with a hammer, or a tool store to get one).
@@ -470,6 +486,21 @@ public:
             break;
         case MenuItem::ClearRubble: t = tasks_.CreateClear(b); break;
         case MenuItem::Reinforce: t = tasks_.CreateReinforce(level_, b); break;
+        case MenuItem::Dynamite:
+            // AITask_PlaceRequestObject: the nearest tool store hands out a stick of dynamite.
+            if (GameObject* store = NearestToolStore(b)) {
+                const ObjectTypeInfo* info = GetObjectRegistry().Get(ObjType::Dynamite, 0);
+                Vec3f at = store->position;
+                Vec2 dir;
+                if (store->info && store->info->model.activities)
+                    objects_.NullPoint(*store, store->info->model.activities->toolNull, at, dir, 4);
+                if (GameObject* d = info ? objects_.Spawn(*info, at.x, at.y) : nullptr) {
+                    Task* dt = tasks_.CreateDynamite(b, *d);
+                    GameObject* u = selection_.Primary();
+                    if (u && (u->abilities & Ability::Dynamite)) tasks_.AssignTo(*dt, *u, objects_, level_);
+                }
+            }
+            break;
         case MenuItem::LayPath: StartPath(b); break;
         case MenuItem::GetTool: panel.OpenMenu(MenuType::GetTool); return;
         case MenuItem::TrainSkill: panel.OpenMenu(MenuType::TrainSkill); return;
@@ -522,13 +553,10 @@ public:
         if (success && t) {
             world::Block& b = level_.block(t->block.x, t->block.y);
             if (t->type == TaskType::Dig && (b.flags & world::BlockFlag::Ground)) {
-                // Level_DestroyWall: the floor is left full of rubble with clearing queued, and
-                // DigComplete starts the level's event chain (rock fall, crystals, ore).
-                b.flags &= ~world::BlockFlag::DigRequested;
-                b.flags |= world::BlockFlag::RockFallFX;
-                messages_.Post(MessageType::DigComplete, nullptr, b.brokenDirection, &t->block);
-                // TODO(ai): the game queues one clear request per rubble layer (four).
-                tasks_.CreateClear(t->block);
+                WallBroken(t->block);
+            } else if (t->type == TaskType::Dynamite && unit.carried && unit.carried == t->target) {
+                // Collected the dynamite: the same task continues to the wall.
+                if (tasks_.AssignTo(*const_cast<Task*>(t), unit, objects_, level_)) return;
             } else if (t->type == TaskType::Clear && (b.flags & world::BlockFlag::CleanFloor)) {
                 messages_.Post(MessageType::ClearComplete, nullptr, 0, &t->block);
             } else if (t->type == TaskType::Train) {
@@ -539,6 +567,70 @@ public:
             }
         }
         tasks_.TaskFinished(unit, success);
+    }
+
+    // Level_DestroyWall follow-up: the floor is left full of rubble with clearing queued, and
+    // DigComplete starts the level's event chain (rock fall, crystals, ore).
+    void WallBroken(BlockPos p) {
+        world::Block& b = level_.block(p.x, p.y);
+        b.flags &= ~world::BlockFlag::DigRequested;
+        b.flags |= world::BlockFlag::RockFallFX;
+        messages_.Post(MessageType::DigComplete, nullptr, b.brokenDirection, &p);
+        // TODO(ai): the game queues one clear request per rubble layer (four).
+        tasks_.CreateClear(p);
+    }
+
+    // LegoObject_SimpleObject_MoveAnimation (dynamite): the wall goes, everything near takes damage
+    // falling off with distance, then the explosion.
+    void ExplodeDynamite(GameObject& d) {
+        const BlockPos w = d.dynamiteTarget;
+        if (level_.InBounds(w.x, w.y) && !(level_.block(w.x, w.y).flags & world::BlockFlag::Ground)) {
+            // Seams come down in one go.
+            bool broken = false;
+            for (int i = 0; i < 5 && !broken; ++i) broken = level_.DestroyWall(w.x, w.y, false);
+            if (broken) {
+                for (GameObject* u : tasks_.CancelBlockTasks(w, TaskType::Dig)) objects_.FinishAction(*u, false);
+                WallBroken(w);
+            }
+        }
+        // LegoObject_Callback_DynamiteExplosion. TODO(objects): units die at zero health.
+        for (const auto& op : objects_.objects()) {
+            GameObject& o = *op;
+            if (&o == &d || o.removed || !(o.flags3 & 0x40000)) continue;
+            const float dx = o.position.x - d.position.x, dy = o.position.y - d.position.y;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist < dynamiteDamageRadius_) o.health -= (1.0f - dist / dynamiteDamageRadius_) * dynamiteMaxDamage_;
+        }
+        int sfx = 0;
+        if (GetSfx().GetType("SFX_Dynamite", sfx)) GetSfx().PlayNormal(sfx);
+        // Effect_Spawn_Explosion. TODO(camera): Camera_Shake(5, 50).
+        GetGame().explosions.Spawn({d.position.x, d.position.y, level_.map().WorldZ(d.position.x, d.position.y) - 1.0f});
+        objects_.Remove(d);
+    }
+
+    // LegoObject_Callback_ScareTrainedMiniFiguresAwayFromTickingDynamite: explosives experts
+    // within the damage radius of lit dynamite run away from it.
+    void ScareFromDynamite() {
+        const float bs = level_.map().blockSize();
+        for (const auto& dp : objects_.objects()) {
+            const GameObject& d = *dp;
+            if (d.removed || d.type != ObjType::Dynamite || !d.ticking) continue;
+            for (const auto& op : objects_.objects()) {
+                GameObject& u = *op;
+                if (u.removed || u.type != ObjType::MiniFigure || !(u.abilities & Ability::Dynamite) || u.routing ||
+                    u.state != UnitState::Idle)
+                    continue;
+                const float dx = u.position.x - d.position.x, dy = u.position.y - d.position.y;
+                const float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist >= dynamiteDamageRadius_ || dist <= 0.0f) continue;
+                // TODO(ai): LegoObject_TryRunAway picks its escape route and plays RunPanic.
+                BlockPos to;
+                for (float reach = bs * 3.0f; reach >= bs; reach -= bs) {
+                    const float x = u.position.x + dx / dist * reach, y = u.position.y + dy / dist * reach;
+                    if (level_.map().WorldToBlock(x, y, to.x, to.y) && objects_.RouteToBlock(u, to)) break;
+                }
+            }
+        }
     }
 
     void OnPanelButton(PanelButton b) {
@@ -965,6 +1057,24 @@ public:
         }
     }
 
+    // The tool store nearest to a block (dynamite is handed out there).
+    GameObject* NearestToolStore(BlockPos b) const {
+        const Vec2 c = level_.map().BlockCentre(b.x, b.y);
+        GameObject* best = nullptr;
+        float bestD = 0.0f;
+        for (const auto& op : objects_.objects()) {
+            GameObject& s = *op;
+            if (s.type != ObjType::Building || s.removed || s.hidden || s.teleportingIn || !s.stats) continue;
+            if (!(s.stats->F1(s.level) & StatsFlag1::ToolStore)) continue;
+            const float dx = s.position.x - c.x, dy = s.position.y - c.y;
+            if (!best || dx * dx + dy * dy < bestD) {
+                best = &s;
+                bestD = dx * dx + dy * dy;
+            }
+        }
+        return best;
+    }
+
     // LegoObject_Search (trainer): the nearest standing building whose stats train the skill.
     GameObject* NearestTrainer(const GameObject& unit, uint32_t ability) const {
         uint32_t flag = 0;
@@ -1214,6 +1324,20 @@ public:
                     }
             }
         }
+        // RR_DEBUG_DYNAMITE="tick,x,y": dynamite is ordered for that wall at that tick.
+        if (const char* dy = std::getenv("RR_DEBUG_DYNAMITE")) {
+            const auto parts = SplitTokens(dy, ",");
+            if (parts.size() == 3 && ++debugDynamiteTick_ == std::atoi(std::string(parts[0]).c_str())) {
+                const BlockPos w{std::atoi(std::string(parts[1]).c_str()), std::atoi(std::string(parts[2]).c_str())};
+                GetGame().iconPanel->OpenMenu(MenuType::Wall, &w);
+                RR_INFO("Debug dynamite at %d,%d", w.x, w.y);
+                debugDynamite_ = w;
+            }
+            if (debugDynamite_.x >= 0 && GetGame().iconPanel->Settled() && GetGame().iconPanel->menu() == MenuType::Wall) {
+                OnMenuItem(MenuItem::Dynamite);
+                debugDynamite_ = {-1, -1};
+            }
+        }
         // Debug dig requests wait until their wall has been exposed.
         for (size_t i = 0; i < debugDigs_.size();) {
             const BlockPos b = debugDigs_[i];
@@ -1258,6 +1382,8 @@ public:
         // Level_UpdateEffects: finished rock falls release the block (RockFallComplete).
         rockFallsDone_.clear();
         GetGame().rockFalls.Update(elapsed, rockFallsDone_);
+        GetGame().explosions.Update(elapsed);
+        ScareFromDynamite();
         for (BlockPos b : rockFallsDone_) {
             world::Block& blk = level_.block(b.x, b.y);
             if (!(blk.flags & 0x1000)) messages_.Post(MessageType::RockFallComplete, nullptr, 0, &b);
@@ -1287,6 +1413,7 @@ public:
             break;
         default: break;
         }
+        if (tasks_.HasBlockTask(b, TaskType::Dynamite)) return kDynamite;
         if (tasks_.HasBlockTask(b, TaskType::Reinforce)) return kReinforce;
         if (level_.block(bx, by).flags & world::BlockFlag::DigRequested) return kDig;
         return kNone;
@@ -1364,6 +1491,7 @@ public:
         static const bool hideObjects = std::getenv("RR_DEBUG_NOOBJ") != nullptr;  // pixel-diff checks
         if (!hideObjects) objects_.Draw(renderer_);
         GetGame().rockFalls.Draw(renderer_);
+        GetGame().explosions.Draw(renderer_);
         renderer_.EndFrame();
 
         r2d.SetAnchor(Anchor::Center);
@@ -1454,8 +1582,10 @@ private:
     std::string message_;
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
     bool cheats_ = false, fastForward_ = false, infiniteStock_ = false;
-    int debugTrainTick_ = 0;
+    int debugTrainTick_ = 0, debugDynamiteTick_ = 0;
+    BlockPos debugDynamite_{-1, -1};
     bool maxBuildingLevels_ = false;  // cheat F2 without a selection
+    float dynamiteDamageRadius_ = 75.0f, dynamiteMaxDamage_ = 150.0f;
     ObjectiveWindow objective_;
     RadarMap radar_;
     PowerGrid power_;

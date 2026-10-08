@@ -40,7 +40,7 @@ constexpr uint32_t All = 0x3f;
 // What a unit is busy doing after arriving somewhere.
 enum class UnitState : uint8_t {
     Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool, Reinforcing,
-    Training
+    Training, PlacingDynamite
 };
 
 // A live game object (LegoObject). Grows as the game systems are implemented.
@@ -91,6 +91,8 @@ struct GameObject {
     int drillSound = -1;                   // play handle of the looping drill sound
     bool triggered = false;                // the animation passed its TRIGGER frame this tick
     uint32_t abilities = 0;                // trained skills (Ability)
+    bool ticking = false;                  // dynamite: lit, explodes when TickDown ends
+    BlockPos dynamiteTarget{-1, -1};       // dynamite: the wall it blows up
     float trainTimer = 0.0f;               // time since the last training (LegoObject_UpdateElapsedTimes)
     bool crystalDrained = false;           // power crystal used up (UnpoweredCrystalRGB)
     bool powered = false;                  // building: drawing power (or generating it)
@@ -120,6 +122,9 @@ struct GameObject {
     void EquipTool(ToolType t);
     // Faces a ground direction (heading 0 = +Y, increasing towards +X).
     void Face(Vec2 dir);
+    // Plays an activity of the model by its own name (simple objects such as dynamite use
+    // "Normal" / "TickDown" rather than Activity_*).
+    bool PlayNamedAnim(std::string_view name);
 };
 
 // Per-tick distances from LegoObject_CalculateSpeeds: route = ground covered, anim = animation
@@ -177,6 +182,8 @@ public:
     // with a filter, only objects it accepts.
     GameObject* PickObject(const Vec3f& origin, const Vec3f& dir, bool (*accept)(const GameObject&) = nullptr) const;
     bool instantDrill = false;  // debug cheat: walls break on the first drill tick
+    // Dynamite whose TickDown has run out.
+    std::function<void(GameObject& dynamite)> onExplode;
     // LegoObject_SetCrystalPoweredColour: power crystals are drawn in one of these colours
     // (Lego.cfg PowerCrystalRGB / UnpoweredCrystalRGB).
     Vec3f crystalColour{0.0f, 1.0f, 0.0f}, drainedCrystalColour{1.0f, 0.0f, 1.0f};

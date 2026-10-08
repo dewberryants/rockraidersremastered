@@ -77,6 +77,8 @@ public:
     Task* CreateClear(BlockPos block);
     // AITask_DoReinforce_AtBlockPos.
     Task* CreateReinforce(const world::Level& level, BlockPos block);
+    // AITask_DoDynamite_AtBlockPos: a trained unit collects `dynamite` and places it at the wall.
+    Task* CreateDynamite(BlockPos wall, GameObject& dynamite);
     // AITask_DoTrain_Target: learn a skill at a building that trains it.
     Task* CreateTrain(GameObject& building, uint32_t ability, GameObject* forUnit);
     // Removes the block's pending tasks of a type; returns the units that were on them.
@@ -106,7 +108,7 @@ public:
     // Gives a task straight to a unit (orders for selected units); false if it cannot start.
     // A direct order: the unit drops whatever task it held and starts this one.
     bool AssignTo(Task& t, GameObject& unit, ObjectList& objects, world::Level& level) {
-        if (t.assigned) return false;
+        if (t.assigned && t.assigned != &unit) return false;
         ReleaseUnit(unit);
         return Start(t, unit, objects, level);
     }
