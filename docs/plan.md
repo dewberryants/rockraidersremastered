@@ -82,7 +82,7 @@ Digger and Bulldozer, ore and crystals to collect, every raider trained).
    normals from the floor under the first four wheel nulls, smoothed (0.4), give the tilt;
    wheels are moved onto the floor keeping their rest height (the original's exact offset is
    lost in the decompile) and each turns by its own movement, backwards when reversing.
-5. **Vehicle upgrades:** built with the Upgrade Station, see milestone 2 step 2. Planning notes: The upgrade menu at an Upgrade Station:
+5. **Vehicle upgrades:** built with the Upgrade Station (milestone 2 step 2). Original notes:
    engine, drill, scan and carry bits (`GameObject::upgradeLevel`, the .ae `Upgrades::LevelABCD`
    blocks, bit order [carry][scan][speed][drill]); stats have one column per level (Lego.cfg
    `Levels 16`; `o.level` picks the column - check how the original maps upgrade bits to it).
@@ -97,7 +97,10 @@ vehicles carrying barriers, the get-in mouse pointer, reversing and turning (mil
 ## 2. Building functions (next)
 
 Test: `scripts\test-buildings.bat` (Level18: Tool Store, Power Station, Teleport Pad, Support
-Station, two Mining Lasers, Geological Center; 10 crystals and 30 ore in storage).
+Station, two Mining Lasers, Geological Center; added an Upgrade Station at 19,30 with power
+paths to it and the Tool Store, a Small Digger, Hover Scout and Small Truck, three trained
+raiders; 10 crystals and 50 ore). Level18 has no raiders of its own and its Power Station
+reaches nothing without the added paths.
 
 1. **Upgrading buildings** (play-tested). The Upgrade item of a building's
    menu (`LegoObject_GetBuildingUpgradeCost`, `LegoObject_UpgradeBuilding`): enabled while the
@@ -114,10 +117,28 @@ Station, two Mining Lasers, Geological Center; 10 crystals and 30 ore in storage
    a part is a weapon name, not a parent: the Mining Laser turret and the Large Digger's laser
    were skipped before and are drawn now. Not done: the help window text
    (`HelpWindow_RecallDependencies`), the turret's fire and pivot nulls (milestone 3).
-2. **Upgrade Station:** vehicle upgrades (milestone 1 step 5) and Rock Raider upgrades
-   (UpgradeMan: needs a tool store, `Interface_HandleMenuItem` case 0x40). Item ids: UpgradeMan
-   0x40, UpgradeBuilding 0x41, UpgradeVehicle 0x42, Engine 0x43 / Drill 0x44 / Scan 0x45 /
-   Carry 0x46 call `AITask_DoUpgrade` with upgrade types 1 / 0 / 2 / 3.
+2. **Upgrade Station** (built, waiting for the play-test). `AITask_DoUpgrade` makes an Upgrade
+   task (0x15) only the ordering unit takes; buildings must be active (`LegoObject_IsActive`:
+   standing and powered, flags3 0x20000000).
+   - *Rock Raiders* (UpgradeMan, item 0x40): enabled with another level to go, empty hands and
+     an active tool store. The raider goes to the nearest one (`Level_GetBuildingAtPosition`
+     is a nearest-tool-store search), stands beside it like training (`LegoObject_TryTrain`
+     with action 0xf) and plays Activity_Train (100 repeats) for UpgradeTime (seconds x 25)
+     times the tool store's FunctionCoef; then its level goes up (more tools on the belt). No
+     cost.
+   - *Vehicles* (UpgradeVehicle 0x42 opens the submenu; Engine 0x43 / Drill 0x44 / Scan 0x45 /
+     Carry 0x46 are upgrade types 1 / 0 / 2 / 3). Enabled with an active Upgrade Station and
+     `LegoObject_HasEnoughOreToUpgrade`: the model has parts for a level with the type's bit
+     (`Vehicle_CanUpgradeType`), it does not have it yet, and storage holds the type's
+     `UpgradeCostOre` (stats column = type) or a fifth of it in studs. The vehicle drives to the
+     block of the nearest free station's deposit null (`LegoObject_TryUpgrade`; facing bits from
+     block deltas, which ends up facing the station). On arrival both play Activity_Upgrade;
+     the station animates at its FunctionCoef (0.8, 1.6 at level 1). When the station's
+     animation ends the cost is paid (ore, or else `UpgradeCostStuds`; nothing if neither is
+     there) and the bit is set: `upgradeLevel` is the vehicle's stats level and picks the
+     drawn parts. Some upgrades are free (Small Digger drill). Differences: the game also
+     waits for the vehicle's own animation to loop; "a unit has been upgraded" text and the
+     help window are not shown yet.
 3. **Further building functions:**
    - **Ore Refinery:** turns ore into refined ore (studs). The side bar's stud display, and
      `CostRefinedOre` for buildings that ask for it.
