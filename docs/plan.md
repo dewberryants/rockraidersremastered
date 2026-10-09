@@ -9,112 +9,110 @@ Playable: Level 1 start to finish, and the early missions as far as their system
 
 - Levels load from the original data: terrain, textures, lighting, fog, objects, hidden caverns.
 - Rock Raiders drill, clear rubble, collect and store crystals and ore, fetch tools, reinforce
-  walls, train skills and use dynamite. Tasks follow the level's priorities, and the priority
-  panel can reorder or switch them off.
+  walls, train skills, use dynamite and drop what they carry. Tasks follow the level's
+  priorities, and the priority panel can reorder or switch them off.
 - Building placement, construction sites with deliveries, power paths, the power grid.
-- Teleporting in Rock Raiders and vehicles. Vehicles are drawn (wheels, default parts) but
-  nobody can drive them yet.
+- Vehicles (milestone 1, play-tested): teleporting in, getting in and out, driving, digging,
+  clearing rubble, hauling loads, ground following, engine sounds, upgrade parts drawn.
 - Effects: rock falls, explosions, scene sound cues, activity and put-down sounds.
 - Interface: icon menus that slide, HUD panels, radar, crystal side bar, objective window,
   block highlights, level scripts (NERPs) with their messages.
 - Testing aids: cheat mode (`[debug] cheats=1` or `--cheats`) and the `RR_DEBUG_*` hooks
-  (`RR_DEBUG_SKILLS=bits` gives every raider skills; `RR_DEBUG_SPAWN="Type,x,y;..."` places objects).
+  (`RR_DEBUG_SKILLS=bits` gives every raider skills; `RR_DEBUG_SPAWN="Type,x,y;..."` places
+  objects, and queues collect jobs for ore and crystals).
+
+**Next: milestone 2, building functions.** Start with the Upgrade Station and building upgrades,
+since vehicle upgrades (milestone 1, step 5) wait on it.
 
 ## How we work
-
-Test setups for the user are batch files in `scripts\` (the user runs Windows and cannot set
-environment variables on a command line).
 
 Each step is built and committed, then played and checked by the user. Fixes follow the
 report. Behaviour comes from the decompiled game; where we deliberately differ, the code says so.
 
-## 1. Vehicles and drivers (in progress)
+- **Keep this file current.** The user clears the context often: after each step, record what
+  was done, what is open and what comes next here, and commit it with the work.
+- **Test setups are batch files** in `scripts\` (the user runs Windows and cannot set environment
+  variables on a command line). Example: `scripts\test-vehicles.bat`. `.bat` files are kept
+  with CRLF line endings (`.gitattributes`).
+- **The user play-tests.** Build, commit, then hand over a short checklist. Short headless runs
+  of our own are fine for data and sanity checks (`--screenshot <png> --ticks N`,
+  `--debugcam "tilt,zoom,x,y"`, `--input "tick:click;..."`; the level briefing needs clicks to
+  dismiss). The log is `build/debug/RockRaiders.log`; `--debug` adds debug lines.
+- **Build:** `. tools/env.sh` then `cmake --build --preset debug` (clang, Ninja).
+- **Reading the original:** decompiled functions are in `analysis/raw/decomp/<addr>_<name>.c`
+  (one file per function, reference names from OpenLRR), extracted game data in
+  `analysis/raw/data/` (Lego.cfg, .ae activity files, .lws scenes, level maps), strings in
+  `analysis/raw/strings.json`. Object fields appear as raw offsets: `param_1[0xdb]` is the
+  driver / driven vehicle, `[0xf8]`..`[0xfb]` flags1..4 (our `flags3` is `[0xfa]`), `[0xfc]`
+  abilities, `[0xc2]`.. the carried objects with their count in `[0xc9]`, `[0xbf]` the route
+  target object.
+- **Level coordinates:** `Dugg_*.map` / `Surf_*.map` (header `MAP `, u32 width/height at offset
+  8, u16 cells from offset 16). RR_DEBUG_SPAWN takes 0-based block coordinates.
 
-What is done: teleporting vehicles in, their models, the unmanned vehicle menu, getting in and
-out, driving, vehicle jobs (all play-tested). Next up: ground following (built), then vehicle upgrades.
+## 1. Vehicles and drivers (done except upgrades)
 
-Next:
+All play-tested. Test: `scripts\test-vehicles.bat` (Level02: Small Truck, Hover Scout, Small
+Digger and Bulldozer, ore and crystals to collect, every raider trained).
 
-1. **Getting in and out** (done). Get In (menu) creates a FindDriver task
-   (priority GetIn) any raider with the skill takes; clicking an unmanned vehicle with a trained
-   raider selected sends that raider. Skill: NeedsPilot or land+water → Pilot, land → Driver,
-   water → Sailor. The raider walks onto the vehicle's position and boards at once
-   (`ObjectList::Board`); it sits on `DriverNullName` (or the vehicle origin) and plays
-   `<vehicle activity><vehicle type>` (`Activity_` + type while routing), hidden for
-   `InvisibleDriver`. Get Out puts it at the deposit null if the ground takes it
-   (`ObjectList::GetOut`). Object list `driving` boards and trains the raider.
-   Test setup: `scripts	est-vehicles.bat` (Level02, three vehicles, every raider trained). Still open: water vehicles (docks, GetInAtLand/GetOutAtLand), several selected
-   raiders answering a click, dropping a carried load first, TakeCarryingDrivers, the get-in
-   pointer.
-2. **Driving** (done). Driven vehicles route like units
-   (`Lego_GetCrossTerrainType` only blocks CanBeDriven vehicles without a driver) with their own
-   RouteSpeed and terrain rules, and play Activity_Route. The original never plays StartUp or
-   ShutDown (no such activity in the exe). EngineSound loops on every vehicle and building from
-   arrival until removal, driven or not (`LegoObject_FUN_00438720`); one buffer per sample, so the
-   latest object with that sound takes it. Reverse (route flag 2) is left for milestone 7.
-   Test: `scripts	est-vehicles.bat`. A goto click deselects the units, as in the original
-   (`Interface_BackToMain` posts a clear-selection); see the remaster option in milestone 8.
-3. **Vehicle jobs.** Split in two:
-   - **3a (built, awaiting play-test):** driven vehicles join the task system
-     (`AITask_FUN_00404ef0`: CanBeDriven needs a driver; no tools needed). Vehicles with a
-     `DrillNullName` dig (flag 0x2 of `LegoObject_Create`: Small/Large Digger, Walker) with their
-     own drill times and sounds, and stop when the drill tip is in the wall. The tip only exists
-     in the drill animation; like `Vehicle_FindNull`, `NullPoint(..., anyActivity)` looks in the
-     other animations. CanClearRubble vehicles (Bulldozer) clear rubble. Orders from the menu go
-     to a selected vehicle only if it can do them. Test: `scripts	est-vehicles.bat`.
-     First play-test fixes: upgrade parts were never drawn (the registry hid UpgradeTypes from
-     name lookups; now `FindUpgradePart`) and play the vehicle's activity; missing DrillSound /
-     DrillFadeSound fall back to SFX_Drill / SFX_DrillFade; a vehicle clears all rubble layers in
-     one pass. The Small Digger's hard-rock time really is 180 s (Lego.cfg).
-   - **3b (built, awaiting play-test):** carriers collect and deposit several items. A vehicle
-     collects if its model has `CarryNullName` and it crosses land (flag 0x40); it holds
-     min(`MaxCarry`, `CarryNullFrames`) objects of one type on carry null `CarryStart` + slot, takes
-     plain ore and charged crystals only, and only if a building takes them (tool stores for
-     `EnterToolStore` vehicles, otherwise a ProcessOre/ProcessCrystal building). It keeps
-     collecting until full or it has stood still for 75 units, then delivers the whole load at
-     once (`LegoObject_ProccessCarriedObjects`). Only the Small Truck collects without upgrades
-     (Bulldozer MaxCarry is 0 until the carry upgrade). Vehicles keep their load in
-     `GameObject::cargo`; raiders still use `carried`. Test: `scripts	est-vehicles.bat` (spawns
-     ore and crystals with collect jobs).
-     Play-tested: vehicles fine. Follow-up (play-tested): units drop their load
-     (`ObjectList::DropCarried`, `LegoObject_DropCarriedObject`) through the UnLoadMinifigure /
-     UnLoadVehicle menu items and before direct dig, reinforce, dynamite, train, get-tool and
-     get-in orders (`AITask_UnkInitRouting_FUN_00402530` with dropCarried; clearing keeps the
-     load). Dropped ore and crystals are collected again, and requested again if they were on
-     the way to a construction site.
-     Open: the cats carrying on water, other objects (barriers), drivers carried in
-     (`TakeCarryingDrivers`).
-4. **Ground following** (built, awaiting play-test). `ObjectList::UpdateVehicleTilt` follows
-   `Vehicle_SetPosition`: the floor heights under the first four wheel nulls of the playing
-   animation give two triangle normals; their sum, smoothed with the last tick's (weight 0.4), is
-   the vehicle's up and the heading is flattened onto it. Wheels are then moved onto the floor
-   (keeping the rest height of their null; the original's exact offset is lost in the
-   decompile). Drivers take the vehicle's tilt. All vehicles have wheel nulls (hover vehicles use
-   NULL_OBJECT wheels), so all tilt. Reported before: the Bulldozer sank into sloped floor when its
-   clearing animation backs it up.
-5. **Vehicle upgrades.** The upgrade menu at an Upgrade Station: engine, drill, scan and carry
-   bits, their parts and stats. This needs the Upgrade Station (milestone 2).
+1. **Getting in and out.** Get In (menu) creates a FindDriver task (priority GetIn) any raider
+   with the skill takes; clicking an unmanned vehicle with a trained raider selected sends that
+   raider. Skill: NeedsPilot or land+water: Pilot, land: Driver, water: Sailor. The raider
+   boards on arrival (`ObjectList::Board`), sits on `DriverNullName` (or the vehicle origin),
+   plays `<vehicle activity><vehicle type>` (`Activity_` + type while routing) and is hidden for
+   `InvisibleDriver`. Get Out puts it at the deposit null (`ObjectList::GetOut`). Object list
+   `driving` boards and trains the raider.
+2. **Driving.** Driven vehicles route like units (`Lego_GetCrossTerrainType` blocks CanBeDriven
+   vehicles only without a driver). The original never plays StartUp or ShutDown. EngineSound
+   loops on every vehicle and building from arrival until removal (`LegoObject_FUN_00438720`);
+   one buffer per sample, so the latest object with that sound takes it. A goto click deselects
+   the units, as in the original (see the remaster option in milestone 8).
+3. **Vehicle jobs.** Driven vehicles take tasks (`AITask_FUN_00404ef0`). Drill-null vehicles dig
+   and stop when the drill tip (found in any animation, `NullPoint(..., anyActivity)`) is in the
+   wall; the Small Digger's hard rock time really is 180 s. CanClearRubble vehicles clear all
+   layers in one pass. Carriers (carry null + CrossLand) hold min(MaxCarry, CarryNullFrames)
+   objects of one type on carry null CarryStart + slot in `GameObject::cargo`, and deliver when
+   full or after standing 75 units (`LegoObject_VehicleMaxCarryChecksTime_FUN_00439c80`).
+   Units drop loads (`ObjectList::DropCarried`) via the Unload items and before direct orders.
+   Upgrade parts are looked up with `ObjectRegistry::FindUpgradePart` and play the vehicle's
+   activity.
+4. **Ground following.** `ObjectList::UpdateVehicleTilt` (`Vehicle_SetPosition`): two triangle
+   normals from the floor under the first four wheel nulls, smoothed (0.4), give the tilt;
+   wheels are moved onto the floor keeping their rest height (the original's exact offset is
+   lost in the decompile) and each turns by its own movement, backwards when reversing.
+5. **Vehicle upgrades** (waits for milestone 2). The upgrade menu at an Upgrade Station:
+   engine, drill, scan and carry bits (`GameObject::upgradeLevel`, the .ae `Upgrades::LevelABCD`
+   blocks, bit order [carry][scan][speed][drill]); stats have one column per level (Lego.cfg
+   `Levels 16`; `o.level` picks the column - check how the original maps upgrade bits to it).
+   Read `LegoObject_CompleteVehicleUpgrade`, `Vehicle_SetUpgradeLevel`, `Vehicle_CanUpgradeType`,
+   `LegoObject_TryUpgrade_FUN_00448f50`, `AITask_DoUpgrade`, and task type 0x15 in
+   `AITask_FUN_00404ef0` (the vehicle drives to the station's deposit null).
 
-Done when: you can beam down a Small Truck, a Hover Scout and a Small Digger, get a trained
-raider in, drive each one, and have the digger drill and the truck haul ore to the Tool Store.
+Still open (later milestones): water vehicles (docks, GetInAtLand/GetOutAtLand, the cats
+carrying on water), several selected raiders answering one get-in click, TakeCarryingDrivers,
+vehicles carrying barriers, the get-in mouse pointer, reversing and turning (milestone 7).
 
-## 2. Building functions
+## 2. Building functions (next)
 
 Buildings that are only built and powered today:
 
 - **Upgrading buildings:** the Upgrade menu item, ore cost, upgrade time, the model's upgrade
   parts, and higher-level stats. Read `LegoObject_UpgradeBuilding`.
+- **Upgrade Station:** vehicle upgrades (milestone 1 step 5) and Rock Raider upgrades
+  (UpgradeMan).
 - **Ore Refinery:** turns ore into refined ore (studs). The side bar's stud display, and
   `CostRefinedOre` for buildings that ask for it.
 - **Support Station:** oxygen supply (`OxygenCoef`) and raiders eating to restore energy
   (GoFeed, Eat).
-- **Upgrade Station:** vehicle upgrades and Rock Raider upgrades (UpgradeMan).
 - **Geological Center:** scanning reveals the map around it (ScanRange) and on the radar.
 - **Mining Laser:** turret firing at monsters (`Weapon_*`).
 - **Docks, Super Teleport:** water and large vehicles (with milestone 1).
 - **Power-off bubbles** over buildings without power, and the Power On/Off menu item.
 - **Teleporting buildings down** (`LegoObject_TeleportDownBuilding`). Construction leftovers:
   flattening the ground, barriers around sites, height tolerance.
+
+Notes from milestone 1 that matter here: buildings already loop their EngineSound hum; the
+Bulldozer has no EnterToolStore, so it delivers only to ProcessOre / ProcessCrystal buildings
+(Refinery, Power Station) once the carry upgrade lets it carry.
 
 ## 3. Rock monsters and combat
 
