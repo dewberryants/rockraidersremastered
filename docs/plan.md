@@ -31,7 +31,7 @@ report. Behaviour comes from the decompiled game; where we deliberately differ, 
 ## 1. Vehicles and drivers (in progress)
 
 What is done: teleporting vehicles in, their models, the unmanned vehicle menu, getting in and
-out, driving (both play-tested). Next up: vehicle jobs.
+out, driving, vehicle jobs (all play-tested). Next up: ground following.
 
 Next:
 
@@ -76,7 +76,7 @@ Next:
      (Bulldozer MaxCarry is 0 until the carry upgrade). Vehicles keep their load in
      `GameObject::cargo`; raiders still use `carried`. Test: `scripts	est-vehicles.bat` (spawns
      ore and crystals with collect jobs).
-     Play-tested: vehicles fine. Follow-up (built, awaiting play-test): units drop their load
+     Play-tested: vehicles fine. Follow-up (play-tested): units drop their load
      (`ObjectList::DropCarried`, `LegoObject_DropCarriedObject`) through the UnLoadMinifigure /
      UnLoadVehicle menu items and before direct dig, reinforce, dynamite, train, get-tool and
      get-in orders (`AITask_UnkInitRouting_FUN_00402530` with dropCarried; clearing keeps the
