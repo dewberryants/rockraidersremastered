@@ -319,6 +319,8 @@ void ObjectList::Update(float elapsed) {
         }
     }
     for (auto& op : objects_)
+        if (op->type == ObjType::Vehicle && !op->removed) UpdateVehicleTilt(*op);
+    for (auto& op : objects_)
         if (op->driver && !op->removed) UpdateDriverPosition(*op);
     // LegoObject_UpdateCarrying: carried objects sit on their carrier's carry null.
     for (auto& op : objects_) {
@@ -357,7 +359,7 @@ bool ObjectList::NullPoint(const GameObject& c, const std::string& nullName, Vec
         static LwsPose pose;
         EvaluateLws(scene, time, a->looping, pose);
         if (node >= pose.world.size()) return false;
-        const Mat4 w = ObjectMatrix(c.position, c.heading, scale) * pose.world[node];
+        const Mat4 w = WorldMatrix(c, scale) * pose.world[node];
         pos = w.TransformPoint({0, 0, 0});
         const Vec3f fwd = w.TransformDir({0, 0, 1});
         dir = (fwd.x != 0.0f || fwd.y != 0.0f) ? Vec2{fwd.x, fwd.y} : c.faceDir;
@@ -926,7 +928,7 @@ void ObjectList::Draw(Renderer3D& r) const {
         const Vec3f* tint = nullptr;
         if (o.type == ObjType::PowerCrystal) tint = o.crystalDrained ? &drainedCrystalColour : &crystalColour;
         if (m.activities) {
-            const Mat4 world = ObjectMatrix(o.position, o.heading, m.activities->scale);
+            const Mat4 world = WorldMatrix(o, m.activities->scale);
             if (o.anim) {
                 EvaluateLws(*o.anim->scene, o.animTime, o.anim->looping, pose);
                 DrawPose(r, *o.anim->scene, pose, world);
@@ -934,7 +936,7 @@ void ObjectList::Draw(Renderer3D& r) const {
             }
             if (o.anim2 && m.secondPart) {
                 EvaluateLws(*o.anim2->scene, o.animTime2, o.anim2->looping, pose);
-                DrawPose(r, *o.anim2->scene, pose, ObjectMatrix(o.position, o.heading, m.secondPart->scale));
+                DrawPose(r, *o.anim2->scene, pose, WorldMatrix(o, m.secondPart->scale));
             }
         } else if (m.scene) {
             EvaluateLws(*m.scene, o.animTime, true, pose);
@@ -961,7 +963,6 @@ void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsS
         return false;
     };
     // Vehicle_PopulateWheelNulls: up to six wheels, turning with the distance driven.
-    // TODO(vehicles): wheels follow the ground and tilt the body (Vehicle_SetPosition).
     if (am.wheelMesh && !am.wheelNull.empty()) {
         Mat4 spin;
         const float c = std::cos(o.wheelSpin), s = std::sin(o.wheelSpin);
@@ -969,6 +970,7 @@ void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsS
         for (int w = 0; w < 6; ++w) {
             Mat4 mw;
             if (!nodeWorld(am.wheelNull, w, mw)) break;
+            mw.m[14] += o.wheelDrop[w];  // resting on the floor
             DrawMesh(r, *am.wheelMesh, mw * spin);
         }
     }
@@ -1026,6 +1028,68 @@ void ObjectList::UpdateEngineSound(GameObject& o) {
         return;
     }
     GetSoundBank().SetPlayPosition(o.engineSound, at);
+}
+
+Mat4 ObjectList::WorldMatrix(const GameObject& o, float scale) const {
+    // LegoObject_UpdateDriverStickyPosition copies the vehicle's whole orientation to its driver.
+    const GameObject* tiltOf = o.tilted ? &o : (o.driving && o.driving->tilted ? o.driving : nullptr);
+    if (!tiltOf) return ObjectMatrix(o.position, o.heading, scale);
+    const Vec3f n = tiltOf->tiltUp;
+    Vec3f f{std::sin(o.heading), std::cos(o.heading), 0.0f};
+    f = f - n * Dot(f, n);
+    const float len = Length(f);
+    if (len < 1e-4f) return ObjectMatrix(o.position, o.heading, scale);
+    return ObjectMatrix(o.position, f * (1.0f / len), n, scale);
+}
+
+void ObjectList::UpdateVehicleTilt(GameObject& v) {
+    v.tilted = false;
+    for (float& d : v.wheelDrop) d = 0.0f;
+    const ActivityModel* am = v.info ? v.info->model.activities.get() : nullptr;
+    if (!level_ || !am || am->wheelNull.empty() || !v.anim || !v.anim->scene) return;
+    // The wheel nulls of the playing animation with the vehicle upright (Vehicle_PopulateWheelNulls).
+    const LwsScene& scene = *v.anim->scene;
+    static LwsPose pose;
+    EvaluateLws(scene, v.animTime, v.anim->looping, pose);
+    const Mat4 upright = ObjectMatrix(v.position, v.heading, am->scale);
+    std::vector<size_t> wheels;
+    for (size_t i = 0; i < scene.nodes.size() && i < pose.world.size() && wheels.size() < 6; ++i)
+        if (EqualsNoCase(scene.nodes[i].name, am->wheelNull)) wheels.push_back(i);
+    if (wheels.size() < 3) return;
+    const world::Map3D& map = level_->map();
+    Vec3f p[4];
+    for (size_t i = 0; i < 4 && i < wheels.size(); ++i) {
+        const Vec3f w = (upright * pose.world[wheels[i]]).TransformPoint({0, 0, 0});
+        p[i] = {w.x, w.y, map.WorldZ(w.x, w.y)};
+    }
+    // Two triangles of wheels give the ground normal (+Z is down here).
+    Vec3f n = Cross(p[1] - p[0], p[1] - p[2]);
+    if (wheels.size() >= 4) {
+        Vec3f n2 = Cross(p[3] - p[2], p[3] - p[0]);
+        if (Length(n2) > 1e-6f && Length(n) > 1e-6f) n = n * (1.0f / Length(n)) + n2 * (1.0f / Length(n2));
+    }
+    if (Length(n) < 1e-6f) return;
+    n = n * (1.0f / Length(n));
+    if (n.z < 0.0f) n = n * -1.0f;  // wheel order decides the sign; the floor's normal points down
+    // Smoothed against the last tick's normal (weight 0.4) so the body settles rather than snaps.
+    if (Length(v.groundNormal) < 0.5f) v.groundNormal = n;
+    n = n + v.groundNormal * 0.4f;
+    n = n * (1.0f / Length(n));
+    v.groundNormal = n;
+    Vec3f f{std::sin(v.heading), std::cos(v.heading), 0.0f};
+    f = f - n * Dot(f, n);
+    if (Length(f) < 1e-4f) return;
+    v.tiltDir = f * (1.0f / Length(f));
+    v.tiltUp = n * -1.0f;
+    v.tilted = true;
+    // Each wheel is then moved down (or up) onto the floor below it, keeping the height its null
+    // has above the floor when the vehicle stands upright on flat ground (axle, not tyre, on it).
+    const Mat4 tilt = ObjectMatrix(v.position, v.tiltDir, v.tiltUp, am->scale);
+    for (size_t i = 0; i < wheels.size(); ++i) {
+        const float rest = v.position.z - (upright * pose.world[wheels[i]]).TransformPoint({0, 0, 0}).z;
+        const Vec3f w = (tilt * pose.world[wheels[i]]).TransformPoint({0, 0, 0});
+        v.wheelDrop[i] = map.WorldZ(w.x, w.y) - rest - w.z;
+    }
 }
 
 void ObjectList::DropCarried(GameObject& o) {

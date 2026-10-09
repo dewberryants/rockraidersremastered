@@ -8,6 +8,9 @@ namespace rr {
 // World matrix of a game object: model +Z points along the heading, +Y up (world -Z).
 // Heading 0 faces north (+Y); positive headings turn towards east.
 Mat4 ObjectMatrix(const Vec3f& position, float heading, float scale = 1.0f);
+// The same with a full orientation: dir is the model's +Z (forward), up its +Y (both unit length
+// and perpendicular).
+Mat4 ObjectMatrix(const Vec3f& position, const Vec3f& dir, const Vec3f& up, float scale = 1.0f);
 
 // Submits a posed scene (or a single mesh) to the renderer. A colour, when given, replaces the
 // diffuse and emissive colour of every group (Container_Mesh_SetColourAlpha + _SetEmissive).

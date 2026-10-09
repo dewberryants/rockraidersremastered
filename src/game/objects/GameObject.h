@@ -103,6 +103,12 @@ struct GameObject {
     GameObject* driving = nullptr;         // minifigure: the vehicle it sits in (LegoObject driveObject)
     uint32_t upgradeLevel = 0;             // Upgrade level bits (engine, drill, scan, carry)
     float wheelSpin = 0.0f;                // wheel rotation (distance / wheel radius)
+    // Vehicle_SetPosition: the vehicle rests on the ground under its wheels. groundNormal is the
+    // smoothed ground normal (+Z is down; zero until first set), tiltDir/tiltUp the resulting
+    // orientation and wheelDrop how far each wheel is moved down onto the floor.
+    Vec3f groundNormal{0, 0, 0}, tiltDir{0, 1, 0}, tiltUp{0, 0, -1};
+    bool tilted = false;
+    float wheelDrop[6] = {};
     Vec2 lastPos;
     BlockPos dynamiteTarget{-1, -1};       // dynamite: the wall it blows up
     float trainTimer = 0.0f;               // time since the last training (LegoObject_UpdateElapsedTimes)
@@ -256,6 +262,10 @@ private:
     void UpdateMovement(GameObject& o, float elapsed);
     // Starts the engine loop once the object has arrived and keeps it on the object.
     void UpdateEngineSound(GameObject& o);
+    // Vehicle_SetPosition: tilts a vehicle to the ground under its wheels.
+    void UpdateVehicleTilt(GameObject& v);
+    // The object's world matrix: heading only, or the tilt of a vehicle (and of its driver).
+    Mat4 WorldMatrix(const GameObject& o, float scale) const;
     // LegoObject_UpdateActivityChange: the driver plays "<vehicle activity><vehicle type>".
     void SetDriverAnim(const GameObject& vehicle);
     // LegoObject_UpdateDriverStickyPosition: the driver sits on the vehicle's driver null.

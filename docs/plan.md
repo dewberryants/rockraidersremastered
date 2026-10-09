@@ -31,7 +31,7 @@ report. Behaviour comes from the decompiled game; where we deliberately differ, 
 ## 1. Vehicles and drivers (in progress)
 
 What is done: teleporting vehicles in, their models, the unmanned vehicle menu, getting in and
-out, driving, vehicle jobs (all play-tested). Next up: ground following.
+out, driving, vehicle jobs (all play-tested). Next up: ground following (built), then vehicle upgrades.
 
 Next:
 
@@ -84,9 +84,14 @@ Next:
      the way to a construction site.
      Open: the cats carrying on water, other objects (barriers), drivers carried in
      (`TakeCarryingDrivers`).
-4. **Ground following.** Wheels sit on the terrain and the body tilts to match
-   (`Vehicle_SetPosition`). Without it the Bulldozer sinks into sloped floor when its clearing
-   animation backs it up (reported in play-testing).
+4. **Ground following** (built, awaiting play-test). `ObjectList::UpdateVehicleTilt` follows
+   `Vehicle_SetPosition`: the floor heights under the first four wheel nulls of the playing
+   animation give two triangle normals; their sum, smoothed with the last tick's (weight 0.4), is
+   the vehicle's up and the heading is flattened onto it. Wheels are then moved onto the floor
+   (keeping the rest height of their null; the original's exact offset is lost in the
+   decompile). Drivers take the vehicle's tilt. All vehicles have wheel nulls (hover vehicles use
+   NULL_OBJECT wheels), so all tilt. Reported before: the Bulldozer sank into sloped floor when its
+   clearing animation backs it up.
 5. **Vehicle upgrades.** The upgrade menu at an Upgrade Station: engine, drill, scan and carry
    bits, their parts and stats. This needs the Upgrade Station (milestone 2).
 

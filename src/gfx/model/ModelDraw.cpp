@@ -8,8 +8,10 @@
 namespace rr {
 
 Mat4 ObjectMatrix(const Vec3f& position, float heading, float scale) {
-    const Vec3f dir{std::sin(heading), std::cos(heading), 0.0f};
-    const Vec3f up{0, 0, -1};
+    return ObjectMatrix(position, Vec3f{std::sin(heading), std::cos(heading), 0.0f}, Vec3f{0, 0, -1}, scale);
+}
+
+Mat4 ObjectMatrix(const Vec3f& position, const Vec3f& dir, const Vec3f& up, float scale) {
     const Vec3f right = Cross(up, dir);
     Mat4 m;
     m.m[0] = right.x * scale; m.m[1] = right.y * scale; m.m[2] = right.z * scale;
