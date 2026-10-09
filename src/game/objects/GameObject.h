@@ -56,7 +56,8 @@ struct GameObject {
     const ObjectTypeInfo* info = nullptr;
     const ObjectStats* stats = nullptr;
     int level = 0;  // upgrade/object level for stats lookups
-    std::string customName;
+    std::string customName;  // a name the player gave the unit (shown instead of the type's name)
+    std::string listName;    // the object list key ("Object12"), for "driving" references
 
     Vec3f position;
     float heading = 0.0f;  // radians, 0 = facing +Y (north)

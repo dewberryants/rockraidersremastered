@@ -1258,13 +1258,13 @@ void ObjectList::BoardListed(GameObject& unit, const std::string& vehicleName) {
     if (vehicleName.empty() || unit.type != ObjType::MiniFigure) return;
     for (auto& op : objects_) {
         GameObject& v = *op;
-        if (v.removed || v.type != ObjType::Vehicle || v.driver || !EqualsNoCase(v.customName, vehicleName)) continue;
+        if (v.removed || v.type != ObjType::Vehicle || v.driver || !EqualsNoCase(v.listName, vehicleName)) continue;
         // Lego_LoadOLObjectList: the driver is trained for the vehicle (LegoObject_TrainMiniFigure).
         unit.abilities |= DriverAbility(v);
         Board(unit, v);
         return;
     }
-    RR_WARN("Object list: %s drives unknown vehicle %s", unit.customName.c_str(), vehicleName.c_str());
+    RR_WARN("Object list: %s drives unknown vehicle %s", unit.listName.c_str(), vehicleName.c_str());
 }
 
 void ObjectList::Clear() {
@@ -1319,7 +1319,7 @@ std::vector<GameObject*> ObjectList::ExposeBlock(int bx, int by) {
         if (level_->map().WorldToBlock(h.position.x, h.position.y, b.x, b.y) && b.x == bx && b.y == by) {
             GameObject* o = PlaceListedObject(*h.info, h.position.x, h.position.y, h.heading);
             o->health = h.health;
-            o->customName = h.name;
+            o->listName = h.name;
             if (!h.driving.empty()) drivers.emplace_back(o, h.driving);
             created.push_back(o);
             hidden_.erase(hidden_.begin() + std::ptrdiff_t(i));
@@ -1381,7 +1381,7 @@ bool ObjectList::LoadObjectList(const std::string& file, world::Level& level, Ca
         }
         GameObject* o = PlaceListedObject(*info, x, y, headingDeg);
         o->health = health;
-        o->customName = key;
+        o->listName = key;
         // TODO(ai): crystals/ore/dynamite/barriers get a collect task.
         if (!driving.empty()) drivers.emplace_back(o, driving);
     }
