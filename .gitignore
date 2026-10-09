@@ -15,3 +15,6 @@
 # Build output
 /build/
 /out/
+
+# Logs from runs started in the repository root
+*.log
