@@ -126,9 +126,11 @@ public:
     }
     const std::vector<std::unique_ptr<Task>>& tasks() const { return tasks_; }
 
+    // Whether the unit could do the task if it had the tool (orders check this for vehicles).
+    bool CanDoIgnoringTools(const Task& t, const GameObject& unit, const world::Level& level) const;
+
 private:
     bool CanDo(const Task& t, const GameObject& unit, const world::Level& level) const;
-    bool CanDoIgnoringTools(const Task& t, const GameObject& unit, const world::Level& level) const;
     bool HasGetToolTask(ToolType tool) const;
     static ToolType ToolFor(TaskType t);
     bool Start(Task& t, GameObject& unit, ObjectList& objects, world::Level& level);

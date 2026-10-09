@@ -594,7 +594,10 @@ public:
         default: break;
         }
         // With units selected the order goes to the primary unit straight away.
-        if (t && selection_.Primary()) tasks_.AssignTo(*t, *selection_.Primary(), objects_, level_);
+        // A selected vehicle only takes orders it can carry out (a truck cannot drill).
+        GameObject* p = selection_.Primary();
+        if (t && p && (p->type != ObjType::Vehicle || tasks_.CanDoIgnoringTools(*t, *p, level_)))
+            tasks_.AssignTo(*t, *p, objects_, level_);
         panel.BackToMain();
     }
 

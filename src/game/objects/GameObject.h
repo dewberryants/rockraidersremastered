@@ -225,7 +225,11 @@ public:
     // World position and facing (the null's +Z in the ground plane) of a named null in the
     // object's current animation (Container_SearchTree on the activity container); instance
     // picks among nulls sharing the name (Building_FindNull's frameNo).
-    bool NullPoint(const GameObject& o, const std::string& nullName, Vec3f& pos, Vec2& dir, int instance = 0) const;
+    // With anyActivity, a null missing from the playing animation is looked up in the others.
+    bool NullPoint(const GameObject& o, const std::string& nullName, Vec3f& pos, Vec2& dir, int instance = 0,
+                   bool anyActivity = false) const;
+    // Whether the unit can take dig jobs (vehicles: a drill null in the model).
+    static bool CanDig(const GameObject& o);
     // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
     void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 

@@ -309,15 +309,23 @@ bool TaskSystem::CanDo(const Task& t, const GameObject& unit, const world::Level
     if (t.retryTimer > 0.0f || t.remove || t.assigned) return false;
     if (t.forUnit && t.forUnit != &unit) return false;
     if (priorityOff_[size_t(t.priorityType)] && t.type != TaskType::GetTool) return false;
-    // TODO(ai): vehicles and rock monsters take tasks too; trained skills.
-    if (unit.type != ObjType::MiniFigure || !unit.stats) return false;
+    // AITask_FUN_00404ef0: vehicles take tasks only with a driver.
+    // TODO(ai): rock monsters take tasks too.
+    if (!unit.stats) return false;
+    if (unit.type != ObjType::MiniFigure && !(unit.type == ObjType::Vehicle && unit.driver)) return false;
     if (unit.carried) return false;
     // LegoObject_TaskHasTool: minifigures need the task's tool on their belt.
-    if (const ToolType need = ToolFor(t.type); need != ToolType::Count && !unit.HasTool(need)) return false;
+    if (const ToolType need = ToolFor(t.type);
+        unit.type == ObjType::MiniFigure && need != ToolType::Count && !unit.HasTool(need))
+        return false;
     return CanDoIgnoringTools(t, unit, level);
 }
 
 bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const world::Level& level) const {
+    // Vehicles dig (with a drill null) and clear rubble (CanClearRubble).
+    // TODO(vehicles): carriers collect and deposit (MaxCarry).
+    if (unit.type == ObjType::Vehicle && t.type != TaskType::Dig && t.type != TaskType::Clear) return false;
+    if (t.type == TaskType::Dig && !ObjectList::CanDig(unit)) return false;
     switch (t.type) {
     case TaskType::Dig: {
         const world::Block& b = level.block(t.block.x, t.block.y);
@@ -512,7 +520,8 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
     std::vector<GameObject*> idle;
     for (const auto& op : objects.objects()) {
         GameObject& u = *op;
-        if (u.removed || u.hidden || u.driving || u.type != ObjType::MiniFigure) continue;
+        if (u.removed || u.hidden || u.driving) continue;
+        if (u.type != ObjType::MiniFigure && !(u.type == ObjType::Vehicle && u.driver)) continue;
         if (u.routing || u.state != UnitState::Idle || u.teleportingIn || TaskOf(u)) continue;
         if (u.flags3 & ObjFlag3::Selected) continue;  // TODO(ai): tasks given to selected units
         if (u.carried && u.deliverZone) {

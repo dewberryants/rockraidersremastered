@@ -328,25 +328,50 @@ void ObjectList::Update(float elapsed) {
 }
 
 bool ObjectList::NullPoint(const GameObject& c, const std::string& nullName, Vec3f& pos, Vec2& dir,
-                           int instance) const {
+                           int instance, bool anyActivity) const {
     const ObjectModel* m = c.info ? &c.info->model : nullptr;
-    if (!m || !m->activities || nullName.empty() || !c.anim || !c.anim->scene) return false;
-    const LwsScene& scene = *c.anim->scene;
-    size_t node = scene.nodes.size();
-    for (size_t i = 0; i < scene.nodes.size(); ++i)
-        if (EqualsNoCase(scene.nodes[i].name, nullName) && instance-- == 0) {
-            node = i;
-            break;
-        }
-    if (node == scene.nodes.size()) return false;
-    static LwsPose pose;
-    EvaluateLws(scene, c.animTime, c.anim->looping, pose);
-    if (node >= pose.world.size()) return false;
-    const Mat4 w = ObjectMatrix(c.position, c.heading, m->activities->scale) * pose.world[node];
-    pos = w.TransformPoint({0, 0, 0});
-    const Vec3f fwd = w.TransformDir({0, 0, 1});
-    dir = (fwd.x != 0.0f || fwd.y != 0.0f) ? Vec2{fwd.x, fwd.y} : c.faceDir;
-    return true;
+    if (!m || !m->activities || nullName.empty()) return false;
+    auto inScene = [&](const Activity* a, float time, float scale) {
+        if (!a || !a->scene) return false;
+        const LwsScene& scene = *a->scene;
+        size_t node = scene.nodes.size();
+        int skip = instance;
+        for (size_t i = 0; i < scene.nodes.size(); ++i)
+            if (EqualsNoCase(scene.nodes[i].name, nullName) && skip-- == 0) {
+                node = i;
+                break;
+            }
+        if (node == scene.nodes.size()) return false;
+        static LwsPose pose;
+        EvaluateLws(scene, time, a->looping, pose);
+        if (node >= pose.world.size()) return false;
+        const Mat4 w = ObjectMatrix(c.position, c.heading, scale) * pose.world[node];
+        pos = w.TransformPoint({0, 0, 0});
+        const Vec3f fwd = w.TransformDir({0, 0, 1});
+        dir = (fwd.x != 0.0f || fwd.y != 0.0f) ? Vec2{fwd.x, fwd.y} : c.faceDir;
+        return true;
+    };
+    if (inScene(c.anim, c.animTime, m->activities->scale)) return true;
+    if (!anyActivity) return false;
+    // Vehicle_FindNull searches the whole activity container: a null missing from the playing
+    // animation is found in another one (the drill tip only exists in the drill animation).
+    if (m->secondPart && inScene(c.anim2, c.animTime2, m->secondPart->scale)) return true;
+    for (const ActivityModel* am : {m->activities.get(), m->secondPart.get()}) {
+        if (!am) continue;
+        for (const auto& [name, a] : am->activities)
+            if (inScene(a.get(), 0.0f, am->scale)) return true;
+    }
+    return false;
+}
+
+bool ObjectList::CanDig(const GameObject& o) {
+    // LegoObject_Create: vehicles dig if their model names a drill null (flag 0x2).
+    if (o.type != ObjType::Vehicle) return true;
+    const ObjectModel* m = o.info ? &o.info->model : nullptr;
+    if (!m) return false;
+    for (const ActivityModel* am : {m->activities.get(), m->secondPart.get()})
+        if (am && !am->drillNull.empty()) return true;
+    return false;
 }
 
 void ObjectList::PlaySceneSounds(const LwsScene& scene, bool loop, float t0, float t1, const Vec3f& at) {
@@ -789,15 +814,24 @@ void ObjectList::UpdateMovement(GameObject& o, float elapsed) {
     o.position.z = level_->map().WorldZ(p.x, p.y);
 
     // Heading into a wall to drill or reinforce it: stop once the unit reaches the wall block.
-    // TODO(drilling): use the model's drill null instead of a reach from the collision radius.
+    // Vehicles stop when their drill tip is in the wall (LegoObject_GetDrillNullPosition).
+    // TODO(drilling): minifigures by their drill null too, instead of a reach from the collision radius.
     const RouteNode& last = o.route.back();
     if ((last.action == RouteAction::Drill || last.action == RouteAction::Reinforce ||
          last.action == RouteAction::PlaceDynamite) &&
         size_t(o.routeIndex) + 1 >= o.route.size()) {
         const float reach = (o.stats ? o.stats->Num("CollRadius", o.level, 5.0f) : 5.0f) * 1.5f;
+        Vec2 probe{p.x + o.faceDir.x * reach, p.y + o.faceDir.y * reach};
+        if (o.type == ObjType::Vehicle) {
+            const ObjectModel& m = o.info->model;
+            const ActivityModel* am = m.activities && !m.activities->drillNull.empty() ? m.activities.get()
+                                                                                        : m.secondPart.get();
+            Vec3f tipPos;
+            Vec2 tipDir;
+            if (am && NullPoint(o, am->drillNull, tipPos, tipDir, 0, true)) probe = {tipPos.x, tipPos.y};
+        }
         BlockPos tip;
-        if (level_->map().WorldToBlock(p.x + o.faceDir.x * reach, p.y + o.faceDir.y * reach, tip.x, tip.y) &&
-            tip == last.block) {
+        if (level_->map().WorldToBlock(probe.x, probe.y, tip.x, tip.y) && tip == last.block) {
             const BlockPos wall = last.block;
             const uint8_t action = last.action;
             RouteEnd(o, true);

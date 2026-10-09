@@ -54,12 +54,19 @@ Next:
    latest object with that sound takes it. Reverse (route flag 2) is left for milestone 7.
    Test: `scripts	est-vehicles.bat`. A goto click deselects the units, as in the original
    (`Interface_BackToMain` posts a clear-selection); see the remaster option in milestone 8.
-3. **Vehicle jobs.**
-   - Drilling vehicles take dig tasks (Small Digger, Chrome Crusher, Walker): drill times, drill
-     null, drill sounds.
-   - Carriers pick up and deposit several items (`MaxCarry`, `CarryStart`, carry nulls).
-   - The Bulldozer clears rubble (`CanClearRubble`).
-   - Vehicles join the task system (`TODO(ai)` in `Tasks.cpp`).
+3. **Vehicle jobs.** Split in two:
+   - **3a (built, awaiting play-test):** driven vehicles join the task system
+     (`AITask_FUN_00404ef0`: CanBeDriven needs a driver; no tools needed). Vehicles with a
+     `DrillNullName` dig (flag 0x2 of `LegoObject_Create`: Small/Large Digger, Walker) with their
+     own drill times and sounds, and stop when the drill tip is in the wall. The tip only exists
+     in the drill animation; like `Vehicle_FindNull`, `NullPoint(..., anyActivity)` looks in the
+     other animations. CanClearRubble vehicles (Bulldozer) clear rubble. Orders from the menu go
+     to a selected vehicle only if it can do them. Test: `scripts	est-vehicles.bat`.
+   - **3b (next):** carriers collect and deposit several items. Flag 0x20 = model has
+     `CarryNullName`, 0x40 = that plus CrossLand (collects); `MaxCarry` per upgrade level,
+     `CarryStart`, `CarryNullFrames` carry nulls. Small Truck and Bulldozer collect on land;
+     the cats carry on water. Collect checks are in `AITask_FUN_00404ef0` (type 3:
+     `LegoObject_FUN_00439e90`, `LegoObject_FUN_00439e40`, `AITask_LiveObject_FUN_00404e00`).
 4. **Ground following.** Wheels sit on the terrain and the body tilts to match
    (`Vehicle_SetPosition`).
 5. **Vehicle upgrades.** The upgrade menu at an Upgrade Station: engine, drill, scan and carry
