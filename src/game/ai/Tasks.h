@@ -53,6 +53,7 @@ struct Task {
     int zone = 0;
     ToolType tool = ToolType::Count;   // GetTool: the tool to fetch
     uint32_t ability = 0;              // Train: the skill to learn (Ability)
+    int upgradeType = 0;               // Upgrade (vehicles): the UpgradeType to fit
     bool toolRequested = false;        // a GetTool job has been raised for this task
     GameObject* forUnit = nullptr;     // only this unit may take the task
 };
@@ -81,6 +82,12 @@ public:
     Task* CreateDynamite(BlockPos wall, GameObject& dynamite);
     // AITask_DoTrain_Target: learn a skill at a building that trains it.
     Task* CreateTrain(GameObject& building, uint32_t ability, GameObject* forUnit);
+    // AITask_DoUpgrade: a minifigure goes up a level at a tool store, or a vehicle has an
+    // upgrade fitted at an Upgrade Station. Only that unit takes the task.
+    Task* CreateUpgrade(GameObject& building, int upgradeType, GameObject& unit);
+    // An Upgrade Station is taken while another vehicle holds an upgrade task for it (the
+    // station's object 0xc0 in the game).
+    bool StationTaken(const GameObject& station, const GameObject& vehicle) const;
     // AITask_DoFindDriver_Target: a unit with the vehicle's driving skill goes and gets in.
     // Null if the vehicle already waits for one.
     Task* CreateFindDriver(GameObject& vehicle);

@@ -110,15 +110,20 @@ public:
         if (const char* lvl = std::getenv("RR_DEBUG_BUILDLEVEL"))
             for (const auto& o : objects_.objects())
                 if (o->type == ObjType::Building) o->level = std::atoi(lvl);
-        // RR_DEBUG_SPAWN="Type,x,y;..." places objects (vehicles...) on blocks.
+        // RR_DEBUG_SPAWN="Type,x,y[,dir];..." places objects (vehicles...) on blocks; buildings
+        // stand finished on their footprint, facing dir (0..3).
         if (const char* sp = std::getenv("RR_DEBUG_SPAWN")) {
             for (std::string_view entry : SplitTokens(sp, ";")) {
                 const auto f = SplitTokens(entry, ",");
-                if (f.size() != 3) continue;
+                if (f.size() != 3 && f.size() != 4) continue;
                 const ObjectTypeInfo* info = GetObjectRegistry().Find(f[0]);
-                const Vec2 c = level_.map().BlockCentre(std::atoi(std::string(f[1]).c_str()),
-                                                        std::atoi(std::string(f[2]).c_str()));
+                const BlockPos at{std::atoi(std::string(f[1]).c_str()), std::atoi(std::string(f[2]).c_str())};
+                const Vec2 c = level_.map().BlockCentre(at.x, at.y);
                 GameObject* o = info ? objects_.Spawn(*info, c.x, c.y) : nullptr;
+                if (o && o->type == ObjType::Building) {
+                    objects_.PlaceBuilding(*o, at, f.size() == 4 ? std::atoi(std::string(f[3]).c_str()) & 3 : 0);
+                    power_.Request();
+                }
                 // Spawned resources are collected like generated ones.
                 if (o && (o->type == ObjType::Ore || o->type == ObjType::PowerCrystal)) tasks_.CreateCollect(*o);
             }
@@ -521,6 +526,25 @@ public:
             return v && v->driver && !v->routing && v->stats &&
                    (v->stats->F1(v->level) & StatsFlag1::CanBeDriven) && (v->stats->F1(v->level) & StatsFlag1::CrossLand);
         }
+        case MenuItem::UpgradeMan: {
+            // Another level to go, empty hands and a working tool store.
+            const GameObject* u = selection_.Primary();
+            return u && u->type == ObjType::MiniFigure && u->stats && u->stats->levels > u->level + 1 &&
+                   !u->carried && HasActiveBuilding(StatsFlag1::ToolStore, 0);
+        }
+        case MenuItem::UpgradeVehicle:
+        case MenuItem::UpgradeEngine:
+        case MenuItem::UpgradeDrill:
+        case MenuItem::UpgradeScan:
+        case MenuItem::UpgradeCarry: {
+            // An Upgrade Station, and the ore for the upgrade (any of them for the menu).
+            const GameObject* v = selection_.Primary();
+            if (!v || !HasActiveBuilding(0, StatsFlag2::UpgradeBuilding)) return false;
+            if (item != MenuItem::UpgradeVehicle) return HasEnoughOreToUpgrade(*v, UpgradeTypeOfItem(item));
+            for (int type = 0; type < 4; ++type)
+                if (HasEnoughOreToUpgrade(*v, type)) return true;
+            return false;
+        }
         case MenuItem::UpgradeBuilding: {
             bool studs = false;
             const GameObject* bld = selection_.Primary();
@@ -556,6 +580,89 @@ public:
         if (!bld.stats || bld.stats->levels <= bld.level + 1) return false;
         studs = ore_ < upgradeCostOre_;
         return !studs || studs_ >= upgradeCostStuds_;
+    }
+
+    // The end of an upgrade task. Minifigures go up a level (LegoObject_Callback_Update).
+    // Vehicles pay for the upgrade now, in ore or else studs, and only get it if they can
+    // (LegoObject_CompleteVehicleUpgrade); the upgrade bits are the vehicle's stats level.
+    void CompleteUpgrade(GameObject& unit, int type) {
+        if (!unit.stats) return;
+        if (unit.type == ObjType::MiniFigure) {
+            // TODO(interface): HelpWindow_RecallDependencies.
+            if (unit.stats->levels > unit.level + 1) ++unit.level;
+            RR_INFO("%s upgraded to level %d", unit.info->name.c_str(), unit.level);
+            return;
+        }
+        const int ore = int(unit.stats->Num("UpgradeCostOre", type)), studs = int(unit.stats->Num("UpgradeCostStuds", type));
+        if (ore_ >= ore) {
+            ore_ -= ore;
+        } else if (studs_ >= studs) {
+            studs_ -= studs;
+        } else {
+            RR_INFO("%s: no ore left for upgrade %d", unit.info->name.c_str(), type);
+            return;
+        }
+        // TODO(interface): Text_DisplayMessage(Text_UnitUpgraded).
+        unit.upgradeLevel |= 1u << type;
+        unit.level = int(unit.upgradeLevel);
+        RR_INFO("%s upgraded (type %d, level bits %u)", unit.info->name.c_str(), type, unit.upgradeLevel);
+    }
+
+    // LegoObject_HasEnoughOreToUpgrade: a vehicle that can take the upgrade, with its ore cost
+    // in storage or, failing that, a fifth of it (rounded up) in studs.
+    bool HasEnoughOreToUpgrade(const GameObject& v, int type) const {
+        if (v.type != ObjType::Vehicle || !v.stats || !ObjectList::CanUpgradeType(v, type, true)) return false;
+        const int cost = int(v.stats->Num("UpgradeCostOre", type));
+        return ore_ >= cost || studs_ >= (cost + 4) / 5;
+    }
+
+    // Interface_DoAction: the engine, drill, scan and carry items.
+    static int UpgradeTypeOfItem(MenuItem item) {
+        switch (item) {
+        case MenuItem::UpgradeEngine: return UpgradeType::Speed;
+        case MenuItem::UpgradeScan: return UpgradeType::Scan;
+        case MenuItem::UpgradeCarry: return UpgradeType::Carry;
+        default: return UpgradeType::Drill;
+        }
+    }
+
+    // LegoObject_IsActive for buildings: standing and powered.
+    static bool BuildingActive(const GameObject& b) {
+        return b.type == ObjType::Building && !b.removed && !b.hidden && !b.teleportingIn && b.stats && b.powered;
+    }
+
+    // Interface_HasToolStore / Interface_HasUpgradeStation: an active building with the flags.
+    bool HasActiveBuilding(uint32_t flags1, uint32_t flags2) const {
+        for (const auto& o : objects_.objects())
+            if (BuildingActive(*o) && (o->stats->F1(o->level) & flags1) == flags1 &&
+                (o->stats->F2(o->level) & flags2) == flags2)
+                return true;
+        return false;
+    }
+
+    // Where AITask_DoUpgrade sends a unit: minifigures to the nearest active tool store
+    // (Level_GetBuildingAtPosition), vehicles to the nearest active Upgrade Station no other
+    // vehicle is using (LegoObject_Search_FUN_00438eb0).
+    GameObject* NearestUpgradeSite(const GameObject& unit) const {
+        GameObject* best = nullptr;
+        float bestD = 0.0f;
+        for (const auto& op : objects_.objects()) {
+            GameObject& b = *op;
+            if (!BuildingActive(b)) continue;
+            if (unit.type == ObjType::MiniFigure) {
+                if (!(b.stats->F1(b.level) & StatsFlag1::ToolStore)) continue;
+            } else if (unit.type == ObjType::Vehicle) {
+                if (!(b.stats->F2(b.level) & StatsFlag2::UpgradeBuilding) || tasks_.StationTaken(b, unit)) continue;
+            } else {
+                continue;
+            }
+            const float dx = b.position.x - unit.position.x, dy = b.position.y - unit.position.y;
+            if (!best || dx * dx + dy * dy < bestD) {
+                best = &b;
+                bestD = dx * dx + dy * dy;
+            }
+        }
+        return best;
     }
 
     // LegoObject_UpgradeBuilding: pays, goes up a level (new stats, upgrade parts) and sparkles.
@@ -646,6 +753,17 @@ public:
         case MenuItem::UpgradeBuilding:
             if (GameObject* bld = selection_.Primary()) UpgradeBuilding(*bld);
             break;
+        case MenuItem::UpgradeVehicle: panel.OpenMenu(MenuType::UpgradeVehicle); return;
+        case MenuItem::UpgradeMan:
+        case MenuItem::UpgradeEngine:
+        case MenuItem::UpgradeDrill:
+        case MenuItem::UpgradeScan:
+        case MenuItem::UpgradeCarry:
+            // AITask_DoUpgrade: the nearest tool store, or the nearest free Upgrade Station.
+            if (GameObject* u = selection_.Primary())
+                if (GameObject* site = NearestUpgradeSite(*u))
+                    t = tasks_.CreateUpgrade(*site, item == MenuItem::UpgradeMan ? 0 : UpgradeTypeOfItem(item), *u);
+            break;
         case MenuItem::GetOut:
             if (GameObject* v = selection_.Primary())
                 if (objects_.GetOut(*v)) RR_DEBUG("Driver out of %s", v->info->name.c_str());
@@ -666,7 +784,7 @@ public:
         if (t && p && (p->type != ObjType::Vehicle || tasks_.CanDoIgnoringTools(*t, *p, level_))) {
             // AITask_UnkInitRouting_FUN_00402530: digging, reinforcing and training orders make the
             // unit put its load down first (clearing does not).
-            if (t->type != TaskType::Clear) objects_.DropCarried(*p);
+            if (t->type != TaskType::Clear && t->type != TaskType::Upgrade) objects_.DropCarried(*p);
             tasks_.AssignTo(*t, *p, objects_, level_);
         }
         panel.BackToMain();
@@ -683,6 +801,8 @@ public:
                 if (tasks_.AssignTo(*const_cast<Task*>(t), unit, objects_, level_)) return;
             } else if (t->type == TaskType::Clear && (b.flags & world::BlockFlag::CleanFloor)) {
                 messages_.Post(MessageType::ClearComplete, nullptr, 0, &t->block);
+            } else if (t->type == TaskType::Upgrade) {
+                CompleteUpgrade(unit, t->upgradeType);
             } else if (t->type == TaskType::Train) {
                 // LegoObject_TrainMiniFigure. TODO(interface): Info_Send / Text_DisplayMessage.
                 unit.abilities |= t->ability;
@@ -1481,6 +1601,32 @@ public:
                     }
             }
         }
+        // RR_DEBUG_UPGRADE="tick,type": at that tick the first vehicle (given a driver if it has
+        // none) is sent for upgrade type 0..3, and the first raider on foot to the tool store.
+        if (const char* up = std::getenv("RR_DEBUG_UPGRADE")) {
+            const auto parts = SplitTokens(up, ",");
+            if (parts.size() == 2 && ++debugUpgradeTick_ == std::atoi(std::string(parts[0]).c_str())) {
+                const int type = std::atoi(std::string(parts[1]).c_str());
+                GameObject *vehicle = nullptr, *man = nullptr;
+                for (const auto& o : objects_.objects()) {
+                    if (o->removed) continue;
+                    if (!vehicle && o->type == ObjType::Vehicle) vehicle = o.get();
+                    if (!man && o->type == ObjType::MiniFigure && !o->driving) man = o.get();
+                }
+                if (vehicle && !vehicle->driver && man) {
+                    objects_.Board(*man, *vehicle);
+                    man = nullptr;
+                    for (const auto& o : objects_.objects())
+                        if (!o->removed && o->type == ObjType::MiniFigure && !o->driving) man = o.get();
+                }
+                if (vehicle)
+                    if (GameObject* site = NearestUpgradeSite(*vehicle)) tasks_.CreateUpgrade(*site, type, *vehicle);
+                if (man)
+                    if (GameObject* site = NearestUpgradeSite(*man)) tasks_.CreateUpgrade(*site, 0, *man);
+                RR_INFO("Debug upgrade: vehicle %s, raider %s", vehicle ? vehicle->info->name.c_str() : "-",
+                        man ? man->info->name.c_str() : "-");
+            }
+        }
         // RR_DEBUG_DYNAMITE="tick,x,y": dynamite is ordered for that wall at that tick.
         if (const char* dy = std::getenv("RR_DEBUG_DYNAMITE")) {
             const auto parts = SplitTokens(dy, ",");
@@ -1760,7 +1906,7 @@ private:
     std::string message_;
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
     bool cheats_ = false, fastForward_ = false, infiniteStock_ = false;
-    int debugTrainTick_ = 0, debugDynamiteTick_ = 0;
+    int debugTrainTick_ = 0, debugDynamiteTick_ = 0, debugUpgradeTick_ = 0;
     BlockPos debugDynamite_{-1, -1};
     bool maxBuildingLevels_ = false;  // cheat F2 without a selection
     float dynamiteDamageRadius_ = 75.0f, dynamiteMaxDamage_ = 150.0f;

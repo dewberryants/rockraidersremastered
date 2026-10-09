@@ -165,6 +165,9 @@ ObjectSpeeds ObjectList::CalculateSpeeds(const GameObject& o, float elapsed) con
     }
     const float transCoef = o.anim ? o.anim->transCoef : 0.0f;
     sp.anim = (transCoef == 0.0f ? 1.0f : route / transCoef) * elapsed;
+    // An upgrading Upgrade Station animates at its FunctionCoef (faster at level 1).
+    if (o.type == ObjType::Building && o.upgrading && (o.stats->F2(o.level) & StatsFlag2::UpgradeBuilding))
+        sp.anim *= o.stats->Num("FunctionCoef", o.level, 1.0f);
     sp.route = route * elapsed;
     return sp;
 }
@@ -295,6 +298,11 @@ void ObjectList::Update(float elapsed) {
             if (onExplode) onExplode(o);
             continue;
         }
+        // The Upgrade Station goes back to standing once its upgrade animation has played.
+        if (o.upgrading && o.animOverrun > 0.0f) {
+            o.upgrading = false;
+            o.SetActivity(ActivityType::Stand);
+        }
         if (!o.teleportingIn) UpdateEngineSound(o);
         if (o.teleportingIn) {
             // Arrived once the beam-in animation has played through.
@@ -386,6 +394,15 @@ int ObjectList::CargoCapacity(const GameObject& v) {
     return std::min(maxCarry, am ? am->carryNullFrames : 0);
 }
 
+bool ObjectList::CanUpgradeType(const GameObject& v, int type, bool current) {
+    if (v.type != ObjType::Vehicle || !v.info || !v.info->model.activities) return false;
+    const uint32_t bit = 1u << type;
+    if (current && (v.upgradeLevel & bit)) return false;
+    uint32_t levels = 0;  // Upgrade_Load: the levels that have parts
+    for (const ActivityModel::UpgradePart& p : v.info->model.activities->upgrades) levels |= p.levels;
+    return (levels & bit) != 0;
+}
+
 bool ObjectList::LoadReady(const GameObject& v) {
     if (v.cargo.empty()) return false;
     return int(v.cargo.size()) >= CargoCapacity(v) || v.stillTime >= 75.0f;
@@ -437,6 +454,21 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         // Arrival flag 0x400: Activity_Train plays once; the skill is granted at its end.
         o.state = UnitState::Training;
         o.SetActivity(ActivityType::Train);
+        break;
+    case RouteAction::Upgrade:
+        // Arrival flag 0x8000 (LegoObject_Callback_Update): a minifigure trains at the tool store
+        // (Activity_Train, 100 repeats) for its UpgradeTime; a vehicle waits on the Upgrade
+        // Station while the station plays Activity_Upgrade.
+        o.state = UnitState::Upgrading;
+        if (o.type == ObjType::MiniFigure) {
+            o.SetActivity(ActivityType::Train, 100);
+        } else {
+            o.SetActivity(ActivityType::Upgrade);
+            if (target) {
+                target->SetActivity(ActivityType::Upgrade);
+                target->upgrading = true;
+            }
+        }
         break;
     case RouteAction::Clear:
         o.state = UnitState::Clearing;
@@ -609,6 +641,23 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
     case UnitState::Training:
         if (o.animOverrun > 0.0f) FinishAction(o, true);
         break;
+    case UnitState::Upgrading: {
+        GameObject* site = o.stateTarget;
+        if (!site || site->removed) {
+            FinishAction(o, false);
+        } else if (o.type == ObjType::MiniFigure) {
+            // Done after UpgradeTime (seconds of the current level) times the tool store's
+            // FunctionCoef; the level goes up in onActionDone.
+            const float time = o.stats->Num("UpgradeTime", o.level) * 25.0f *
+                               (site->stats ? site->stats->Num("FunctionCoef", site->level, 1.0f) : 1.0f);
+            if (o.animTime >= time) FinishAction(o, true);
+        } else if (!site->upgrading) {
+            // The station's animation is over: the upgrade is paid for and fitted in
+            // onActionDone (the game also waits for the vehicle's own animation to end).
+            FinishAction(o, true);
+        }
+        break;
+    }
     case UnitState::PlacingDynamite:
         // The dynamite is set down before the wall and lit (TickDown).
         if (o.triggered && o.carried) PlacedSound(*o.carried);

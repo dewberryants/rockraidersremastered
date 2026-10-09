@@ -40,8 +40,14 @@ constexpr uint32_t All = 0x3f;
 // What a unit is busy doing after arriving somewhere.
 enum class UnitState : uint8_t {
     Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool, Reinforcing,
-    Training, PlacingDynamite
+    Training, PlacingDynamite, Upgrading
 };
+
+// Vehicle upgrade types (LegoObject_UpgradeType): the bit each sets in the upgrade level, and the
+// column of the vehicle's UpgradeCostOre / UpgradeCostStuds stats.
+namespace UpgradeType {
+constexpr int Drill = 0, Speed = 1, Scan = 2, Carry = 3;
+}
 
 // A live game object (LegoObject). Grows as the game systems are implemented.
 struct GameObject {
@@ -102,6 +108,8 @@ struct GameObject {
     GameObject* driver = nullptr;          // the minifigure driving it (null: unmanned)
     GameObject* driving = nullptr;         // minifigure: the vehicle it sits in (LegoObject driveObject)
     uint32_t upgradeLevel = 0;             // Upgrade level bits (engine, drill, scan, carry)
+    int upgradeType = 0;                   // vehicle: the upgrade it drives to the station for
+    bool upgrading = false;                // Upgrade Station: playing Activity_Upgrade (flags2 0x8000)
     // Vehicle_SetPosition: each wheel turns by the distance its own null moved over its radius,
     // backwards when it moved backwards (so animations that shift the body turn them too).
     float wheelSpin[6] = {};
@@ -255,6 +263,9 @@ public:
     static bool CanCollect(const GameObject& v);
     static int CargoCapacity(const GameObject& v);
     static bool LoadReady(const GameObject& v);
+    // Vehicle_CanUpgradeType: the model has parts for an upgrade level with the type's bit (and,
+    // with current, the vehicle does not have it yet).
+    static bool CanUpgradeType(const GameObject& v, int type, bool current);
     // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
     void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 

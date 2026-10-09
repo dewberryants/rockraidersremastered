@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 #include "core/Log.h"
 #include "core/Random.h"
@@ -216,6 +217,22 @@ Task* TaskSystem::CreateTrain(GameObject& building, uint32_t ability, GameObject
     return t;
 }
 
+Task* TaskSystem::CreateUpgrade(GameObject& building, int upgradeType, GameObject& unit) {
+    Task* t = NewTask(tasks_, TaskType::Upgrade, PriorityType::Upgrade, priorityValue_[size_t(PriorityType::Upgrade)]);
+    t->target = &building;
+    t->upgradeType = upgradeType;
+    t->forUnit = &unit;
+    return t;
+}
+
+bool TaskSystem::StationTaken(const GameObject& station, const GameObject& vehicle) const {
+    for (const auto& t : tasks_)
+        if (t->type == TaskType::Upgrade && t->target == &station && !t->remove && t->forUnit &&
+            t->forUnit != &vehicle && t->forUnit->type == ObjType::Vehicle)
+            return true;
+    return false;
+}
+
 Task* TaskSystem::CreateFindDriver(GameObject& vehicle) {
     if (HasFindDriver(vehicle)) return nullptr;
     Task* t = NewTask(tasks_, TaskType::FindDriver, PriorityType::GetIn, priorityValue_[size_t(PriorityType::GetIn)]);
@@ -325,7 +342,7 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
     // Vehicles dig (with a drill null), clear rubble (CanClearRubble) and collect (carriers).
     if (unit.type == ObjType::Vehicle) {
         if (t.type == TaskType::Collect) return VehicleCanCollect(t, unit, objects_);
-        if (t.type != TaskType::Dig && t.type != TaskType::Clear) return false;
+        if (t.type != TaskType::Dig && t.type != TaskType::Clear && t.type != TaskType::Upgrade) return false;
     }
     if (t.type == TaskType::Dig && !ObjectList::CanDig(unit)) return false;
     switch (t.type) {
@@ -352,6 +369,11 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
     case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
     case TaskType::GetTool: return t.tool != ToolType::Count && !unit.HasTool(t.tool);
     case TaskType::Train: return t.target && !t.target->removed && !(unit.abilities & t.ability);
+    case TaskType::Upgrade:
+        if (!t.target || t.target->removed) return false;
+        if (unit.type == ObjType::Vehicle)
+            return ObjectList::CanUpgradeType(unit, t.upgradeType, true) && !StationTaken(*t.target, unit);
+        return unit.stats->levels > unit.level + 1;
     case TaskType::FindDriver:
         // LegoObject_TryFindDriver_FUN_00440690: a trained unit on foot, a free seat.
         // TODO(vehicles): TakeCarryingDrivers vehicles take units that carry something.
@@ -447,6 +469,29 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         if (!RouteBlocks(level, unit, from, t.block, route) || !objects.RouteBegin(unit, route)) return false;
         unit.route.back().action = RouteAction::Clear;
         break;
+    case TaskType::Upgrade:
+        if (unit.type == ObjType::Vehicle) {
+            // LegoObject_TryUpgrade: to the block of the station's deposit null, arriving in the
+            // direction from the station's block to it in block coordinates. Block y runs
+            // against world y, so the vehicle ends up facing the station.
+            GameObject* station = t.target;
+            const ActivityModel* am = station && station->info ? station->info->model.activities.get() : nullptr;
+            Vec3f np;
+            Vec2 nd;
+            BlockPos sb, to;
+            if (!am || !objects.BlockOf(*station, sb) || !objects.NullPoint(*station, am->depositNull, np, nd) ||
+                !level.map().WorldToBlock(np.x, np.y, to.x, to.y))
+                return false;
+            if (!RouteBlocks(level, unit, from, to, route) || !objects.RouteBegin(unit, route)) return false;
+            const int dx = to.x - sb.x, dy = to.y - sb.y;
+            const uint8_t face = std::abs(dx) <= std::abs(dy) ? (dy <= 0 ? 2 : 0) : (dx <= 0 ? 3 : 1);
+            unit.route.back().action = RouteAction::Upgrade;
+            unit.route.back().flags |= RouteFlag::Face | face;
+            unit.stateTarget = station;
+            unit.upgradeType = t.upgradeType;
+            break;
+        }
+        [[fallthrough]];  // minifigures: LegoObject_TryTrain with the upgrade action
     case TaskType::Train: {
         // LegoObject_TryTrain: on a block beside the building, 4 units from the shared edge at a
         // random point along it, facing the building.
@@ -471,7 +516,7 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
                           nc.y + dir.y * (bs * 0.5f - 4.0f) + dir.x * along};
             if (!objects.RouteBegin(unit, route, &at)) return false;
             const uint8_t face = dir.y > 0.5f ? 0 : dir.x > 0.5f ? 1 : dir.y < -0.5f ? 2 : 3;
-            unit.route.back().action = RouteAction::Train;
+            unit.route.back().action = t.type == TaskType::Upgrade ? RouteAction::Upgrade : RouteAction::Train;
             unit.route.back().flags |= RouteFlag::Face | face;
             unit.stateTarget = t.target;
             routed = true;

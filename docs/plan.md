@@ -18,11 +18,14 @@ Playable: Level 1 start to finish, and the early missions as far as their system
 - Interface: icon menus that slide, HUD panels, radar, crystal side bar, objective window,
   block highlights, level scripts (NERPs) with their messages.
 - Testing aids: cheat mode (`[debug] cheats=1` or `--cheats`) and the `RR_DEBUG_*` hooks
-  (`RR_DEBUG_SKILLS=bits` gives every raider skills; `RR_DEBUG_SPAWN="Type,x,y;..."` places
-  objects, and queues collect jobs for ore and crystals).
+  (`RR_DEBUG_SKILLS=bits` gives every raider skills; `RR_DEBUG_SPAWN="Type,x,y[,dir];..."` places
+  objects, queues collect jobs for ore and crystals and stands buildings on their footprint;
+  `RR_DEBUG_PATH="x,y;..."` lays power paths; `RR_DEBUG_UPGRADE="tick,type"` sends the first
+  vehicle and the first raider on foot for an upgrade).
 
-**Next: milestone 2, building functions.** Step 1 (building upgrades) is play-tested; next is
-the Upgrade Station (step 2), since vehicle upgrades (milestone 1, step 5) wait on it.
+**Next: milestone 2, building functions.** Step 1 (building upgrades) is play-tested; step 2
+(Upgrade Station: vehicle and Rock Raider upgrades) is built and waits for the play-test. Then
+the further building functions (step 3), starting with the Ore Refinery.
 
 ## How we work
 
@@ -49,7 +52,7 @@ report. Behaviour comes from the decompiled game; where we deliberately differ, 
 - **Level coordinates:** `Dugg_*.map` / `Surf_*.map` (header `MAP `, u32 width/height at offset
   8, u16 cells from offset 16). RR_DEBUG_SPAWN takes 0-based block coordinates.
 
-## 1. Vehicles and drivers (done except upgrades)
+## 1. Vehicles and drivers (done; upgrades in milestone 2 step 2)
 
 All play-tested. Test: `scripts\test-vehicles.bat` (Level02: Small Truck, Hover Scout, Small
 Digger and Bulldozer, ore and crystals to collect, every raider trained).
@@ -79,7 +82,7 @@ Digger and Bulldozer, ore and crystals to collect, every raider trained).
    normals from the floor under the first four wheel nulls, smoothed (0.4), give the tilt;
    wheels are moved onto the floor keeping their rest height (the original's exact offset is
    lost in the decompile) and each turns by its own movement, backwards when reversing.
-5. **Vehicle upgrades** (waits for milestone 2). The upgrade menu at an Upgrade Station:
+5. **Vehicle upgrades:** built with the Upgrade Station, see milestone 2 step 2. Planning notes: The upgrade menu at an Upgrade Station:
    engine, drill, scan and carry bits (`GameObject::upgradeLevel`, the .ae `Upgrades::LevelABCD`
    blocks, bit order [carry][scan][speed][drill]); stats have one column per level (Lego.cfg
    `Levels 16`; `o.level` picks the column - check how the original maps upgrade bits to it).
