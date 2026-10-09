@@ -318,6 +318,8 @@ bool IconPanel::HandleInput(const Input& in) {
         } else {
             const ItemDef& d = items_[size_t(entries[i].item)];
             hoverToolTip_ = enabled ? d.toolTip : d.disabledToolTip;
+            if (toolTipFor)
+                if (std::string t = toolTipFor(entries[i].item, enabled); !t.empty()) hoverToolTip_ = std::move(t);
         }
     }
     if (HasBackButton(menu_)) {

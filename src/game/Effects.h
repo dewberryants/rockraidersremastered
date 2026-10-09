@@ -49,10 +49,12 @@ private:
     size_t current_ = 0;
 };
 
-// A one-shot scene played where something happened (Effect_Spawn_Explosion): at most four at
-// once, each removed when its animation ends.
+// A one-shot scene played where something happened (Effect_Spawn_Explosion, Effect_Spawn_Particle):
+// at most maxLive at once (four explosions, ten of each misc effect), each removed when its
+// animation ends.
 class SceneEffect {
 public:
+    explicit SceneEffect(size_t maxLive = 4) : maxLive_(maxLive) {}
     void SetScene(std::shared_ptr<LwsScene> scene) { scene_ = std::move(scene); }
     void Spawn(const Vec3f& pos);
     void Update(float elapsed);
@@ -64,6 +66,7 @@ private:
         Vec3f pos;
         float time = 0.0f;
     };
+    size_t maxLive_;
     std::shared_ptr<LwsScene> scene_;
     std::vector<Instance> live_;
 };

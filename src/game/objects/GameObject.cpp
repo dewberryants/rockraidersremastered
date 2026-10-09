@@ -928,7 +928,8 @@ void ObjectList::Draw(Renderer3D& r) const {
             if (o.anim) {
                 EvaluateLws(*o.anim->scene, o.animTime, o.anim->looping, pose);
                 DrawPose(r, *o.anim->scene, pose, world);
-                if (o.type == ObjType::Vehicle) DrawVehicleParts(r, o, *o.anim->scene, pose, world);
+                if (o.type == ObjType::Vehicle || o.type == ObjType::Building)
+                    DrawUpgradeParts(r, o, *o.anim->scene, pose, world);
             }
             if (o.anim2 && m.secondPart) {
                 EvaluateLws(*o.anim2->scene, o.animTime2, o.anim2->looping, pose);
@@ -943,7 +944,7 @@ void ObjectList::Draw(Renderer3D& r) const {
     }
 }
 
-void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsScene& scene, const LwsPose& pose,
+void ObjectList::DrawUpgradeParts(Renderer3D& r, const GameObject& o, const LwsScene& scene, const LwsPose& pose,
                                   const Mat4& world) const {
     const ActivityModel& am = *o.info->model.activities;
     // The world matrix of the n-th node with a name (Container_FormatPartName + SearchTree).
@@ -970,10 +971,12 @@ void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsS
             DrawMesh(r, *am.wheelMesh, mw * spin);
         }
     }
-    // Upgrade parts of the current upgrade level on their nulls.
-    // TODO(vehicles): parts hanging off other parts (third value), part animations.
+    // Upgrade_SetUpgradeLevel: the parts of exactly the current level on their nulls (vehicles:
+    // the upgrade bits, buildings: the object level).
+    // TODO(weapons): the fire and pivot nulls of weapon parts (Mining Laser turret aiming).
+    const uint32_t partLevel = o.type == ObjType::Building ? uint32_t(o.level) : o.upgradeLevel;
     for (const ActivityModel::UpgradePart& p : am.upgrades) {
-        if (p.levels != o.upgradeLevel || !p.parent.empty()) continue;
+        if (p.levels != partLevel) continue;
         Mat4 mp;
         if (!nodeWorld(p.nullName, p.instance, mp) && !nodeWorld(p.nullName, 0, mp)) {
             DebugOnce(o.info->name + ": no null " + p.nullName + " for part " + p.part);

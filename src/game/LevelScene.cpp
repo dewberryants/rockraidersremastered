@@ -161,6 +161,7 @@ public:
             // TODO(interface): the encyclopedia panel.
         };
         panel.onItem = [this](MenuItem item) { OnMenuItem(item); };
+        panel.toolTipFor = [this](MenuItem item, bool enabled) { return ItemToolTip(item, enabled); };
         game.dependencies.ResetLevel();
         panel.isBuildEnabled = [this](const ObjectTypeInfo& t) { return GetGame().dependencies.Met(t, objects_); };
         panel.onBuild = [this](const ObjectTypeInfo& t) { BeginPlacement(t); };
@@ -171,6 +172,10 @@ public:
         ambient_ = rgb("AmbientRGB", {0.04f, 0.04f, 0.04f});
         dynamiteDamageRadius_ = cfg.GetFloat(game.Id("Main", "DynamiteDamageRadius")).value_or(75.0f);
         dynamiteMaxDamage_ = cfg.GetFloat(game.Id("Main", "DynamiteMaxDamage")).value_or(150.0f);
+        upgradeCostOre_ = cfg.GetInt(game.Id("Main", "BuildingUpgradeCostOre")).value_or(0);
+        upgradeCostStuds_ = cfg.GetInt(game.Id("Main", "BuildingUpgradeCostStuds")).value_or(0);
+        oreRequiredText_ = cfg.GetString(game.Id("ToolTipInfo", "OreRequiredText"), "");
+        std::replace(oreRequiredText_.begin(), oreRequiredText_.end(), '_', ' ');
         objects_.crystalColour = rgb("PowerCrystalRGB", {0.0f, 1.0f, 0.0f});
         objects_.drainedCrystalColour = rgb("UnpoweredCrystalRGB", {1.0f, 0.0f, 1.0f});
         topSpot_ = rgb("TopSpotRGB", {0.5f, 0.5f, 0.5f});
@@ -516,6 +521,11 @@ public:
             return v && v->driver && !v->routing && v->stats &&
                    (v->stats->F1(v->level) & StatsFlag1::CanBeDriven) && (v->stats->F1(v->level) & StatsFlag1::CrossLand);
         }
+        case MenuItem::UpgradeBuilding: {
+            bool studs = false;
+            const GameObject* bld = selection_.Primary();
+            return bld && bld->type == ObjType::Building && BuildingUpgradeCost(*bld, studs);
+        }
         case MenuItem::TeleportMan: {
             // A building that can beam Rock Raiders in, and room in the queue.
             if (teleportQueue_.size() >= kMaxTeleportQueue) return false;
@@ -527,6 +537,38 @@ public:
         }
         default: return false;  // TODO(interface): the remaining items as their systems arrive
         }
+    }
+
+    // Interface_DoSomethingWithRenameReplace: a building that has another level but not the ore
+    // for it says how much more ore it needs. The original follows the text with one ore icon
+    // per piece; we print the number until tooltips have icons.
+    std::string ItemToolTip(MenuItem item, bool enabled) const {
+        if (item != MenuItem::UpgradeBuilding || enabled || oreRequiredText_.empty()) return {};
+        const GameObject* bld = selection_.Primary();
+        if (!bld || !bld->stats || bld->stats->levels <= bld->level + 1) return {};
+        if (ore_ >= upgradeCostOre_ || studs_ >= upgradeCostStuds_) return {};
+        return oreRequiredText_ + " " + std::to_string(upgradeCostOre_ - ore_);
+    }
+
+    // LegoObject_GetBuildingUpgradeCost: a building with another level to go can be upgraded with
+    // BuildingUpgradeCostOre ore, or failing that BuildingUpgradeCostStuds studs.
+    bool BuildingUpgradeCost(const GameObject& bld, bool& studs) const {
+        if (!bld.stats || bld.stats->levels <= bld.level + 1) return false;
+        studs = ore_ < upgradeCostOre_;
+        return !studs || studs_ >= upgradeCostStuds_;
+    }
+
+    // LegoObject_UpgradeBuilding: pays, goes up a level (new stats, upgrade parts) and sparkles.
+    void UpgradeBuilding(GameObject& bld) {
+        bool studs = false;
+        if (bld.type != ObjType::Building || !BuildingUpgradeCost(bld, studs)) return;
+        if (studs) studs_ -= upgradeCostStuds_;
+        else ore_ -= upgradeCostOre_;
+        ++bld.level;
+        RR_INFO("%s upgraded to level %d", bld.info->name.c_str(), bld.level);
+        GetGame().upgradeSparks.Spawn({bld.position.x, bld.position.y, level_.map().WorldZ(bld.position.x, bld.position.y)});
+        // TODO(interface): HelpWindow_RecallDependencies (the "upgraded to Level n" help text).
+        power_.Request();
     }
 
     void OnMenuItem(MenuItem item) {
@@ -600,6 +642,9 @@ public:
         case MenuItem::GetIn:
             // Interface_DoAction: the selection is dropped and any trained unit answers the call.
             if (GameObject* v = selection_.Primary()) tasks_.CreateFindDriver(*v);
+            break;
+        case MenuItem::UpgradeBuilding:
+            if (GameObject* bld = selection_.Primary()) UpgradeBuilding(*bld);
             break;
         case MenuItem::GetOut:
             if (GameObject* v = selection_.Primary())
@@ -1495,6 +1540,7 @@ public:
         rockFallsDone_.clear();
         GetGame().rockFalls.Update(elapsed, rockFallsDone_);
         GetGame().explosions.Update(elapsed);
+        GetGame().upgradeSparks.Update(elapsed);
         ScareFromDynamite();
         for (BlockPos b : rockFallsDone_) {
             world::Block& blk = level_.block(b.x, b.y);
@@ -1604,6 +1650,7 @@ public:
         if (!hideObjects) objects_.Draw(renderer_);
         GetGame().rockFalls.Draw(renderer_);
         GetGame().explosions.Draw(renderer_);
+        GetGame().upgradeSparks.Draw(renderer_);
         renderer_.EndFrame();
 
         r2d.SetAnchor(Anchor::Center);
@@ -1640,6 +1687,7 @@ public:
         res.usedCrystals = power_.used();
         res.quota = crystalQuota_;
         res.ore = ore_;
+        res.studs = studs_;
         game.panels->DrawSideBar(r2d, game.toolTipFont.get(), res, frameElapsed);
         // TODO(interface): the message panel's text window and speech; plain text for now.
         if (const Font* f = game.textFont.get()) {
@@ -1678,7 +1726,10 @@ private:
     Selection selection_;
     TaskSystem tasks_;
     std::vector<BlockPos> debugDigs_;
-    int crystals_ = 0, ore_ = 0, crystalQuota_ = 0;
+    int crystals_ = 0, ore_ = 0, studs_ = 0, crystalQuota_ = 0;
+    // Building upgrades (Lego.cfg Main::BuildingUpgradeCostOre / Studs, ToolTipInfo::OreRequiredText).
+    int upgradeCostOre_ = 0, upgradeCostStuds_ = 0;
+    std::string oreRequiredText_;
     static constexpr size_t kMaxTeleportQueue = 9;
     std::vector<const ObjectTypeInfo*> teleportQueue_;
     // Building placement and construction sites.

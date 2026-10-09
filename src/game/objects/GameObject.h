@@ -260,7 +260,8 @@ public:
 
 private:
     void PlaySceneSounds(const LwsScene& scene, bool loop, float t0, float t1, const Vec3f& at);
-    void DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsScene& scene, const LwsPose& pose,
+    // Wheels and upgrade parts of vehicles and buildings.
+    void DrawUpgradeParts(Renderer3D& r, const GameObject& o, const LwsScene& scene, const LwsPose& pose,
                           const Mat4& world) const;
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);

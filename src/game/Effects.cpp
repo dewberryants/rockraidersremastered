@@ -85,7 +85,7 @@ void RockFallEffects::Draw(Renderer3D& r) const {
 }
 
 void SceneEffect::Spawn(const Vec3f& pos) {
-    if (!scene_ || live_.size() >= 4) return;
+    if (!scene_ || live_.size() >= maxLive_) return;
     live_.push_back({pos, 0.0f});
 }
 

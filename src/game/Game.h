@@ -37,6 +37,7 @@ struct Game {
     Dependencies dependencies;             // build requirements (Dependencies_Initialise)
     RockFallEffects rockFalls;             // wall collapse scenes (Effect_Load_RockFallStylesAll)
     SceneEffect explosions;                // dynamite explosions (MiscObjects Explosion)
+    SceneEffect upgradeSparks{10};         // building upgrades (MiscObjects UpgradeEffect)
 
     bool introsDone = false;
     std::string selectedLevel;  // "Levels::Tutorial01" when a level was chosen

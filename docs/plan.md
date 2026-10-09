@@ -21,8 +21,9 @@ Playable: Level 1 start to finish, and the early missions as far as their system
   (`RR_DEBUG_SKILLS=bits` gives every raider skills; `RR_DEBUG_SPAWN="Type,x,y;..."` places
   objects, and queues collect jobs for ore and crystals).
 
-**Next: milestone 2, building functions.** Start with the Upgrade Station and building upgrades,
-since vehicle upgrades (milestone 1, step 5) wait on it.
+**Next: milestone 2, building functions.** Step 1 (building upgrades) is built and waits for the
+user's play-test; then the Upgrade Station (step 2), since vehicle upgrades (milestone 1, step 5)
+wait on it.
 
 ## How we work
 
@@ -93,22 +94,37 @@ vehicles carrying barriers, the get-in mouse pointer, reversing and turning (mil
 
 ## 2. Building functions (next)
 
-Buildings that are only built and powered today:
+Test: `scripts\test-buildings.bat` (Level18: Tool Store, Power Station, Teleport Pad, Support
+Station, two Mining Lasers, Geological Center; 10 crystals and 30 ore in storage).
 
-- **Upgrading buildings:** the Upgrade menu item, ore cost, upgrade time, the model's upgrade
-  parts, and higher-level stats. Read `LegoObject_UpgradeBuilding`.
-- **Upgrade Station:** vehicle upgrades (milestone 1 step 5) and Rock Raider upgrades
-  (UpgradeMan).
-- **Ore Refinery:** turns ore into refined ore (studs). The side bar's stud display, and
-  `CostRefinedOre` for buildings that ask for it.
-- **Support Station:** oxygen supply (`OxygenCoef`) and raiders eating to restore energy
-  (GoFeed, Eat).
-- **Geological Center:** scanning reveals the map around it (ScanRange) and on the radar.
-- **Mining Laser:** turret firing at monsters (`Weapon_*`).
-- **Docks, Super Teleport:** water and large vehicles (with milestone 1).
-- **Power-off bubbles** over buildings without power, and the Power On/Off menu item.
-- **Teleporting buildings down** (`LegoObject_TeleportDownBuilding`). Construction leftovers:
-  flattening the ground, barriers around sites, height tolerance.
+1. **Upgrading buildings** (built, waiting for the play-test). The Upgrade item of a building's
+   menu (`LegoObject_GetBuildingUpgradeCost`, `LegoObject_UpgradeBuilding`): enabled while the
+   building has another level and storage holds `Main::BuildingUpgradeCostOre` ore (5), or else
+   `BuildingUpgradeCostStuds` studs (1). The upgrade is immediate: no raider and no upgrade time
+   (`UpgradeTime` in the stats is for vehicles). The level goes up (stats column), the
+   `UpgradeEffect` sparks play (misc effect 9, at most ten at once) and the power grid is
+   recomputed. The disabled tooltip reads "Ore needed to upgrade: n" (the original draws n ore
+   icons after the text). Building upgrade parts are drawn for the building's level
+   (`Upgrade_SetUpgradeLevel` takes the parts whose level equals the object level, so level 1 is
+   `Level0001`); only the Mining Laser has them (Turret, DTurret at level 1). The third value of
+   a part is a weapon name, not a parent: the Mining Laser turret and the Large Digger's laser
+   were skipped before and are drawn now. Not done: the help window text
+   (`HelpWindow_RecallDependencies`), the turret's fire and pivot nulls (milestone 3).
+2. **Upgrade Station:** vehicle upgrades (milestone 1 step 5) and Rock Raider upgrades
+   (UpgradeMan: needs a tool store, `Interface_HandleMenuItem` case 0x40). Item ids: UpgradeMan
+   0x40, UpgradeBuilding 0x41, UpgradeVehicle 0x42, Engine 0x43 / Drill 0x44 / Scan 0x45 /
+   Carry 0x46 call `AITask_DoUpgrade` with upgrade types 1 / 0 / 2 / 3.
+3. **Further building functions:**
+   - **Ore Refinery:** turns ore into refined ore (studs). The side bar's stud display, and
+     `CostRefinedOre` for buildings that ask for it.
+   - **Support Station:** oxygen supply (`OxygenCoef`) and raiders eating to restore energy
+     (GoFeed, Eat).
+   - **Geological Center:** scanning reveals the map around it (ScanRange) and on the radar.
+   - **Mining Laser:** turret firing at monsters (`Weapon_*`).
+   - **Docks, Super Teleport:** water and large vehicles (with milestone 1).
+   - **Power-off bubbles** over buildings without power, and the Power On/Off menu item.
+   - **Teleporting buildings down** (`LegoObject_TeleportDownBuilding`). Construction leftovers:
+     flattening the ground, barriers around sites, height tolerance.
 
 Notes from milestone 1 that matter here: buildings already loop their EngineSound hum; the
 Bulldozer has no EnterToolStore, so it delivers only to ProcessOre / ProcessCrystal buildings

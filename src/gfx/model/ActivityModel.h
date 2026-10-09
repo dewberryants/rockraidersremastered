@@ -28,13 +28,16 @@ struct ActivityModel {
     int carryNullFrames = 0;   // how many carry nulls of that name the model has (CarryNullFrames)
     // Vehicles (Vehicle_Load): a wheel mesh on each wheel null (up to six), the driver's seat,
     // and upgrade parts per upgrade level (Upgrade_Load: "Upgrades::LevelABCD", one bit each for
-    // engine, drill, scan and carry).
+    // engine, drill, scan and carry). Buildings use the same blocks numbered by their level
+    // (Building_SetUpgradeLevel: level 1 is Level0001).
     std::shared_ptr<Mesh> wheelMesh;
     std::string wheelNull, driverNull;
     float wheelRadius = 0.0f;
     struct UpgradePart {
         uint32_t levels = 0;  // the upgrade level the part belongs to
-        std::string part, nullName, parent;
+        // A third value names the weapon the part carries (Building_SetUpgradeActivity looks up
+        // its fire and pivot nulls): "Turret GunPivot_Null,1,BigLazer".
+        std::string part, nullName, weapon;
         int instance = 0;     // which of the nulls with that name (0 = first)
     };
     std::vector<UpgradePart> upgrades;

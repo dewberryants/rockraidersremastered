@@ -80,6 +80,9 @@ public:
 
     // Decides per item whether it is shown enabled (the game greys out unusable items).
     std::function<bool(MenuItem)> isEnabled;
+    // Text that replaces an item's tooltip, empty for the configured one (the building upgrade
+    // shows the ore still needed, Interface_DoSomethingWithRenameReplace).
+    std::function<std::string(MenuItem, bool enabled)> toolTipFor;
     // Called when an enabled item is clicked or its shortcut key pressed.
     std::function<void(MenuItem)> onItem;
     // Build menus list object types instead (InterfaceBuildImages): availability and choice.

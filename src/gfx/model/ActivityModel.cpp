@@ -47,7 +47,7 @@ std::shared_ptr<ActivityModel> LoadActivityModel(const std::string& folder, cons
         std::snprintf(id, sizeof(id), "Lego*::Upgrades::Level%u%u%u%u", (lv >> 3) & 1, (lv >> 2) & 1, (lv >> 1) & 1,
                       lv & 1);
         for (Config::ItemRef it = ae.FindArray(id); it != Config::kNone; it = ae.Next(it)) {
-            // "sbucket  normal_bucket_null,1[,parentPart]"
+            // "sbucket  normal_bucket_null,1[,weapon]"
             const auto t = SplitTokens(ae.item(it).value, ",");
             if (t.size() < 2) continue;
             ActivityModel::UpgradePart p;
@@ -55,7 +55,7 @@ std::shared_ptr<ActivityModel> LoadActivityModel(const std::string& folder, cons
             p.part = ae.item(it).key;
             p.nullName = std::string(t[0]);
             p.instance = std::max(0, std::atoi(std::string(t[1]).c_str()) - 1);
-            if (t.size() > 2) p.parent = std::string(t[2]);
+            if (t.size() > 2) p.weapon = std::string(t[2]);
             model->upgrades.push_back(std::move(p));
         }
     }
