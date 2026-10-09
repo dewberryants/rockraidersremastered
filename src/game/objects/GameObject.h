@@ -224,8 +224,8 @@ public:
     void Remove(GameObject& o);
     // Pick sphere centre: half the collision height above the ground under the object.
     Vec3f PickCentre(const GameObject& o) const;
-    // Nearest object whose pick sphere the ray passes through (LegoObject_DoPickSphereSelection);
-    // with a filter, only objects it accepts.
+    // The object whose pick sphere the ray passes through closest to its centre, relative to the
+    // sphere's size (LegoObject_DoPickSphereSelection); with a filter, only objects it accepts.
     GameObject* PickObject(const Vec3f& origin, const Vec3f& dir, bool (*accept)(const GameObject&) = nullptr) const;
     bool instantDrill = false;  // debug cheat: walls break on the first drill tick
     // Dynamite whose TickDown has run out.

@@ -235,9 +235,6 @@ Bulldozer has no EnterToolStore, so it delivers only to ProcessOre / ProcessCrys
 
 ## Parked issues
 
-- Raiders reported to freeze and become unclickable after getting out of a vehicle (after the
-  Upgrade Station test). Not reproduced with Get In / Get Out on Level18, with or without an
-  upgrade in between: waiting for details (which vehicle, where it stood).
 
 - Rock falls when breaking into a cave (the outside-corner animation) don't look right.
 - Interrupting a task when a unit is selected: two flag states in `Message_SelectObject` that

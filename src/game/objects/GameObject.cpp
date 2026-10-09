@@ -179,8 +179,12 @@ Vec3f ObjectList::PickCentre(const GameObject& o) const {
 }
 
 GameObject* ObjectList::PickObject(const Vec3f& origin, const Vec3f& dir, bool (*accept)(const GameObject&)) const {
+    // The game takes the first object in its pools (memory slot order) whose sphere the ray
+    // hits, so which of two overlapping spheres wins is arbitrary there. We take the one whose
+    // centre the ray passes closest to for its size: a raider standing behind a vehicle (at its
+    // deposit null after getting out) is picked when pointed at, the vehicle when its middle is.
     GameObject* best = nullptr;
-    float bestT = 0.0f;
+    float bestScore = 0.0f;
     for (const auto& op : objects_) {
         GameObject& o = *op;
         if (o.removed || o.hidden || !o.stats || (accept && !accept(o))) continue;
@@ -192,13 +196,15 @@ GameObject* ObjectList::PickObject(const Vec3f& origin, const Vec3f& dir, bool (
         const float t = Dot(oc, dir);
         if (t <= 0.0f) continue;
         const Vec3f closest = origin + dir * t;
-        if (Length(c - closest) > radius) continue;
+        const float miss = Length(c - closest);
+        if (miss > radius) continue;
+        const float score = miss / radius;
         // Units win over the large spheres of buildings they stand beside.
         const bool building = o.type == ObjType::Building;
         if (best && building && best->type != ObjType::Building) continue;
-        if (!best || t < bestT || (!building && best->type == ObjType::Building)) {
+        if (!best || score < bestScore || (!building && best->type == ObjType::Building)) {
             best = &o;
-            bestT = t;
+            bestScore = score;
         }
     }
     return best;
