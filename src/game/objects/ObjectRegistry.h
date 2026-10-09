@@ -37,6 +37,8 @@ public:
     void Load(const Config& cfg, std::string_view gameName);
     // Returns null for unknown names. "TVCamera" resolves to ObjType::TVCamera without a model.
     const ObjectTypeInfo* Find(std::string_view name) const;
+    // An UpgradeTypes entry by name (Upgrade_Load looks parts up there).
+    const ObjectTypeInfo* FindUpgradePart(std::string_view name) const;
     const ObjectTypeInfo* Get(ObjType type, int id) const;
     const ObjectModel* Misc(std::string_view name) const;  // effect models ("BoulderExplode", ...)
     int CountOf(ObjType type) const;

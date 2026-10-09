@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <unordered_set>
 
 #include "config/Config.h"
 #include "core/Log.h"
@@ -46,6 +47,12 @@ void PlacedSound(const GameObject& item) {
               : item.type == ObjType::PowerCrystal ? "SFX_PlaceCrystal"
                                                    : "SFX_Place",
               item.position);
+}
+
+// Logs a debug message the first time it comes up (for problems found while drawing).
+void DebugOnce(const std::string& msg) {
+    static std::unordered_set<std::string> seen;
+    if (seen.insert(msg).second) RR_DEBUG("%s", msg.c_str());
 }
 
 // Container_SetAnimationTime: returns how far the time ran past the last frame (0 if not).
@@ -459,11 +466,16 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
 
 namespace {
 // Stats sound names ("Drillsound SND_pilotdrill") to sample ids.
+// Stats_Initialise: a missing or unknown DrillSound / DrillFadeSound falls back to SFX_Drill /
+// SFX_DrillFade; other sounds to none.
 int StatSound(const GameObject& o, std::string_view key) {
     int id = 0;
     if (!o.stats) return -1;
     const std::string name = o.stats->Str(key, o.level);
-    return !name.empty() && GetSfx().GetType(name, id) ? id : -1;
+    if (!name.empty() && GetSfx().GetType(name, id)) return id;
+    if (EqualsNoCase(key, "Drillsound")) return SFX_Drill;
+    if (EqualsNoCase(key, "Drillfadesound")) return SFX_DrillFade;
+    return -1;
 }
 }  // namespace
 
@@ -562,7 +574,10 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         break;
     case UnitState::Clearing:
         if (o.animOverrun > 0.0f) {
-            if (level.ClearRubbleLayer(o.stateBlock.x, o.stateBlock.y)) {
+            // AITask_LiveObject_SetAITaskUnk: a vehicle's one pass clears every layer at once.
+            bool clean = level.ClearRubbleLayer(o.stateBlock.x, o.stateBlock.y);
+            while (o.type == ObjType::Vehicle && !clean) clean = level.ClearRubbleLayer(o.stateBlock.x, o.stateBlock.y);
+            if (clean) {
                 FinishAction(o, true);
             } else {
                 o.activity = ActivityType::Count;  // replay the sweep for the next layer
@@ -903,14 +918,22 @@ void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsS
     for (const ActivityModel::UpgradePart& p : am.upgrades) {
         if (p.levels != o.upgradeLevel || !p.parent.empty()) continue;
         Mat4 mp;
-        if (!nodeWorld(p.nullName, p.instance, mp) && !nodeWorld(p.nullName, 0, mp)) continue;
-        const ObjectTypeInfo* part = GetObjectRegistry().Find(p.part);
-        if (!part) continue;
+        if (!nodeWorld(p.nullName, p.instance, mp) && !nodeWorld(p.nullName, 0, mp)) {
+            DebugOnce(o.info->name + ": no null " + p.nullName + " for part " + p.part);
+            continue;
+        }
+        const ObjectTypeInfo* part = GetObjectRegistry().FindUpgradePart(p.part);
+        if (!part) {
+            DebugOnce(o.info->name + ": unknown upgrade part " + p.part);
+            continue;
+        }
         const ObjectModel& pm = part->model;
         if (pm.mesh) {
             DrawMesh(r, *pm.mesh, mp);
         } else if (pm.activities) {
-            const Activity* st = pm.activities->Find("Activity_Stand");
+            // Vehicle_SetUpgradeActivity: parts play the vehicle's activity if they have it.
+            const Activity* st = pm.activities->Find(ActivityName(o.activity));
+            if (!st) st = pm.activities->Find("Activity_Stand");
             if (st && st->scene) {
                 LwsPose pp;
                 EvaluateLws(*st->scene, o.animTime, true, pp);

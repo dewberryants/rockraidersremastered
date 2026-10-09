@@ -142,6 +142,12 @@ const ObjectTypeInfo* ObjectRegistry::Find(std::string_view name) const {
     return nullptr;
 }
 
+const ObjectTypeInfo* ObjectRegistry::FindUpgradePart(std::string_view name) const {
+    for (const auto& t : types_)
+        if (t.type == ObjType::UpgradePart && EqualsNoCase(t.name, name)) return &t;
+    return nullptr;
+}
+
 const ObjectTypeInfo* ObjectRegistry::Get(ObjType type, int id) const {
     if (type == ObjType::TVCamera) return &tvCamera_;
     for (const auto& t : types_)

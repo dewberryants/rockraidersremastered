@@ -62,13 +62,18 @@ Next:
      in the drill animation; like `Vehicle_FindNull`, `NullPoint(..., anyActivity)` looks in the
      other animations. CanClearRubble vehicles (Bulldozer) clear rubble. Orders from the menu go
      to a selected vehicle only if it can do them. Test: `scripts	est-vehicles.bat`.
+     First play-test fixes: upgrade parts were never drawn (the registry hid UpgradeTypes from
+     name lookups; now `FindUpgradePart`) and play the vehicle's activity; missing DrillSound /
+     DrillFadeSound fall back to SFX_Drill / SFX_DrillFade; a vehicle clears all rubble layers in
+     one pass. The Small Digger's hard-rock time really is 180 s (Lego.cfg).
    - **3b (next):** carriers collect and deposit several items. Flag 0x20 = model has
      `CarryNullName`, 0x40 = that plus CrossLand (collects); `MaxCarry` per upgrade level,
      `CarryStart`, `CarryNullFrames` carry nulls. Small Truck and Bulldozer collect on land;
      the cats carry on water. Collect checks are in `AITask_FUN_00404ef0` (type 3:
      `LegoObject_FUN_00439e90`, `LegoObject_FUN_00439e40`, `AITask_LiveObject_FUN_00404e00`).
 4. **Ground following.** Wheels sit on the terrain and the body tilts to match
-   (`Vehicle_SetPosition`).
+   (`Vehicle_SetPosition`). Without it the Bulldozer sinks into sloped floor when its clearing
+   animation backs it up (reported in play-testing).
 5. **Vehicle upgrades.** The upgrade menu at an Upgrade Station: engine, drill, scan and carry
    bits, their parts and stats. This needs the Upgrade Station (milestone 2).
 
