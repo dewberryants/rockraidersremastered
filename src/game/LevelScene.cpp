@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <unordered_map>
 
 #include "config/Config.h"
 #include "core/Log.h"
@@ -25,6 +26,7 @@
 #include "game/world/Camera.h"
 #include "game/world/Level.h"
 #include "game/world/TextureSet.h"
+#include "gfx/Image.h"
 #include "gfx/Renderer3D.h"
 
 namespace rr {
@@ -298,8 +300,15 @@ public:
             if (GetGame().priorities->HandleInput(in, p.x + panels.AnchorX(PanelType::PriorityList), p.y, tasks_))
                 return;
         }
+        hoverObject_ = nullptr;
         if (panels.HandleInput(in)) return;
         if (panel.HandleInput(in)) return;
+        if (!placing_) {
+            // Lego_ShowObjectToolTip: the unit under the pointer gets a tooltip.
+            Vec3f origin, dir;
+            MouseRay(in.mouseX(), in.mouseY(), origin, dir);
+            hoverObject_ = objects_.PickObject(origin, dir, &Selection::IsSelectable);
+        }
         if (placing_) {
             UpdatePlacement(in);
             return;
@@ -582,6 +591,56 @@ public:
         return !studs || studs_ >= upgradeCostStuds_;
     }
 
+    // Lego_ShowObjectToolTip: the unit's name (buildings add their level name, "(UP1)"). A Rock
+    // Raider's tooltip shows its tools with blank slots up to NumOfToolsCanCarry, then its skills
+    // (blank for those not learnt) if it has any.
+    // TODO(interface): the hover delay, health, a vehicle's driver, the object's tooltip sound.
+    std::string ObjectToolTip(const GameObject& o, std::vector<std::vector<const Image*>>& rows) const {
+        if (!o.info) return {};
+        const Config& cfg = GetApp().config();
+        std::string name = o.customName;
+        if (name.empty()) {
+            name = cfg.GetString(Config::Id(GetGame().gameName, "ObjectNames", o.info->name), "");
+            std::replace(name.begin(), name.end(), '_', ' ');
+        }
+        if (name.empty()) return {};
+        if (o.type == ObjType::Building && o.level > 0) {
+            std::string up = cfg.GetString(Config::Id(GetGame().gameName, "UpgradeNames", "Level" + std::to_string(o.level)), "");
+            if (!up.empty()) name += " (" + up + ")";
+        }
+        if (o.type != ObjType::MiniFigure) return name;
+        const Image* blank = ToolTipIcon("Blank");
+        std::vector<const Image*> tools;
+        for (ToolType t : o.tools)
+            if (const Image* img = ToolTipIcon(ToolTypeName(t))) tools.push_back(img);
+        const int slots = o.stats ? int(o.stats->Num("NumOfToolsCanCarry", o.level)) : 0;
+        for (int i = int(o.tools.size()); i < slots && blank; ++i) tools.push_back(blank);
+        if (!tools.empty()) rows.push_back(std::move(tools));
+        if (o.abilities) {
+            static const char* const kSkills[] = {"LegoObject_AbilityType_Pilot", "LegoObject_AbilityType_Sailor",
+                                                  "LegoObject_AbilityType_Driver", "LegoObject_AbilityType_Dynamite",
+                                                  "LegoObject_AbilityType_Repair", "LegoObject_AbilityType_Scanner"};
+            std::vector<const Image*> skills;
+            for (int i = 0; i < 6; ++i) {
+                const Image* img = (o.abilities & (1u << i)) ? ToolTipIcon(kSkills[i]) : blank;
+                if (img) skills.push_back(img);
+            }
+            rows.push_back(std::move(skills));
+        }
+        return name;
+    }
+
+    // Object_LoadToolTipIcons: Lego.cfg ToolTipIcons, loaded on first use.
+    const Image* ToolTipIcon(std::string_view key) const {
+        auto it = toolTipIcons_.find(std::string(key));
+        if (it == toolTipIcons_.end()) {
+            const std::string path =
+                GetApp().config().GetString(Config::Id(GetGame().gameName, "ToolTipIcons", key), "");
+            it = toolTipIcons_.emplace(std::string(key), path.empty() ? nullptr : Image::Load(path)).first;
+        }
+        return it->second.get();
+    }
+
     // The end of an upgrade task. Minifigures go up a level (LegoObject_Callback_Update).
     // Vehicles pay for the upgrade now, in ore or else studs, and only get it if they can
     // (LegoObject_CompleteVehicleUpgrade); the upgrade bits are the vehicle's stats level.
@@ -781,6 +840,10 @@ public:
         // With units selected the order goes to the primary unit straight away.
         // A selected vehicle only takes orders it can carry out (a truck cannot drill).
         GameObject* p = selection_.Primary();
+        // AITask_DoUpgrade appends to the unit's own task list: an upgrade ordered while another
+        // is under way waits its turn (or the second would ride on the same station animation).
+        const Task* current = p ? tasks_.TaskOf(*p) : nullptr;
+        if (t && t->type == TaskType::Upgrade && current && current->type == TaskType::Upgrade) t = nullptr;
         if (t && p && (p->type != ObjType::Vehicle || tasks_.CanDoIgnoringTools(*t, *p, level_))) {
             // AITask_UnkInitRouting_FUN_00402530: digging, reinforcing and training orders make the
             // unit put its load down first (clearing does not).
@@ -1857,20 +1920,42 @@ public:
         bool rightAlign = false;
         if (tip.empty()) {
             tip = game.iconPanel->hoverToolTip();
-            rightAlign = true;  // Interface_Initialise: ToolTip_SetRightAlign(icon tooltips)
+            rightAlign = !tip.empty();  // Interface_Initialise: ToolTip_SetRightAlign(icon tooltips)
         }
+        std::vector<std::vector<const Image*>> iconRows;
+        if (tip.empty() && hoverObject_ && !hoverObject_->removed) tip = ObjectToolTip(*hoverObject_, iconRows);
         if (const Font* f = game.toolTipFont.get(); f && !tip.empty()) {
-            // ToolTip_Draw: the box (text plus a 3 pixel border) sits 32 below the pointer, or
-            // above it at the bottom of the screen. It starts at the pointer, or ends 32 right of
-            // it when right-aligned, and is kept inside the right edge.
+            // ToolTip_Draw: the box (text, icon rows below it, a 3 pixel border) sits 32 below the
+            // pointer, or above it at the bottom of the screen. It starts at the pointer, or ends
+            // 32 right of it when right-aligned, and is kept inside the right edge.
             constexpr float kBorder = 3.0f, kOffsetY = 32.0f;
             const float mx = GetApp().input().mouseX(), my = GetApp().input().mouseY();
             const float right = 640.0f + r2d.AnchorOffset(Anchor::Center);
-            const float w = float(f->StringWidth(tip)) + 2 * kBorder, h = float(f->height()) + 2 * kBorder;
+            float contentW = float(f->StringWidth(tip)), contentH = float(f->height());
+            for (const auto& row : iconRows) {
+                float rw = 0.0f, rh = 0.0f;
+                for (const Image* img : row) {
+                    rw += float(img->width());
+                    rh = std::max(rh, float(img->height()));
+                }
+                contentW = std::max(contentW, rw);
+                contentH += rh;
+            }
+            const float w = contentW + 2 * kBorder, h = contentH + 2 * kBorder;
             float x = rightAlign ? mx + 32.0f - w : mx;
             if (x + w > right) x = right - w;
             const float y = my + kOffsetY + h > r2d.uiHeight() ? my - h - 1.0f : my + kOffsetY;
             f->Draw(r2d, x + kBorder, y + kBorder, tip);
+            float iy = y + kBorder + float(f->height());
+            for (const auto& row : iconRows) {
+                float ix = x + kBorder, rh = 0.0f;
+                for (const Image* img : row) {
+                    img->Draw(r2d, ix, iy);
+                    ix += float(img->width());
+                    rh = std::max(rh, float(img->height()));
+                }
+                iy += rh;
+            }
         }
         GetPointers().Draw(r2d, GetApp().input().mouseX(), GetApp().input().mouseY());
     }
@@ -1891,6 +1976,8 @@ private:
     // Building upgrades (Lego.cfg Main::BuildingUpgradeCostOre / Studs, ToolTipInfo::OreRequiredText).
     int upgradeCostOre_ = 0, upgradeCostStuds_ = 0;
     std::string oreRequiredText_;
+    GameObject* hoverObject_ = nullptr;  // the unit under the pointer (object tooltip)
+    mutable std::unordered_map<std::string, std::unique_ptr<Image>> toolTipIcons_;
     static constexpr size_t kMaxTeleportQueue = 9;
     std::vector<const ObjectTypeInfo*> teleportQueue_;
     // Building placement and construction sites.

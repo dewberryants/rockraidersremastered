@@ -117,7 +117,7 @@ reaches nothing without the added paths.
    a part is a weapon name, not a parent: the Mining Laser turret and the Large Digger's laser
    were skipped before and are drawn now. Not done: the help window text
    (`HelpWindow_RecallDependencies`), the turret's fire and pivot nulls (milestone 3).
-2. **Upgrade Station** (built, waiting for the play-test). `AITask_DoUpgrade` makes an Upgrade
+2. **Upgrade Station** (play-tested once; fixes below wait for the next test). `AITask_DoUpgrade` makes an Upgrade
    task (0x15) only the ordering unit takes; buildings must be active (`LegoObject_IsActive`:
    standing and powered, flags3 0x20000000).
    - *Rock Raiders* (UpgradeMan, item 0x40): enabled with another level to go, empty hands and
@@ -139,6 +139,16 @@ reaches nothing without the added paths.
      drawn parts. Some upgrades are free (Small Digger drill). Differences: the game also
      waits for the vehicle's own animation to loop; "a unit has been upgraded" text and the
      help window are not shown yet.
+   - *After the first play-test:* an upgrade ordered while the unit's previous one runs waits
+     (the game appends to the unit's own task list), the station's animation restarts for
+     every upgrade (before, several orders rode on one animation), and orders the unit has
+     meanwhile received or outgrown are dropped. A second vehicle ordered to a busy station
+     is ignored, as in the original (the search skips stations with a vehicle, `[0xc0]`);
+     queueing there would be an option for milestone 9.
+   - *Raider tooltip* (`Lego_ShowObjectToolTip`): hovering a unit shows its name (buildings
+     add "(UP1)".. from UpgradeNames); a Rock Raider's adds its tools with blank slots up to
+     NumOfToolsCanCarry, and its skills (`ToolTipIcons`). Not yet: the hover delay, health,
+     a vehicle's driver name, the tooltip sound.
 3. **Further building functions:**
    - **Ore Refinery:** turns ore into refined ore (studs). The side bar's stud display, and
      `CostRefinedOre` for buildings that ask for it.
@@ -199,16 +209,35 @@ Bulldozer has no EnterToolStore, so it delivers only to ProcessOre / ProcessCrys
 
 ## 8. Remaster options (opt-in, after the game is complete)
 
-Higher resolutions and widescreen interface, faster game speeds, quality-of-life options,
-and mod and override folders. Defaults always stay faithful to the original.
+- **Updated Settings Menu** Updated settings menu that allows more customization of all the
+  remastered features.
 
-Quality-of-life options asked for so far:
+- **Rebindable Hotkeys** Hotkeys for almost everything and rebinding options (These should also
+  show up in-game in e.g. tooltips)
+
+- **Selectable Resolution** Scale and space UI to allow for widescreen and full-screen modern
+  resolutions of the 3D gameplay
+
+- **Modern Graphics options** Anti-Aliasing, Ambient Occlusion, Bloom, Shaders that allow for
+  emission, reflection, etc. such that lego pieces actually look plastic-y
+
+## 9. Balance and Gameplay Changes
 
 - **Keep selection after a move order.** The original deselects units (raiders and vehicles)
   after a goto click, because `Lego_HandleWorld` calls `Interface_BackToMain`. As an option,
   the selection and its menu stay so a vehicle can be driven around with repeated clicks.
 
+## 10. Longevity Tooling
+
+- **Map & Campaign editor** Allow the user to create custom maps
+
+- **Multiplayer** Co-Op PvE and Skirmish PvP modes
+
 ## Parked issues
+
+- Raiders reported to freeze and become unclickable after getting out of a vehicle (after the
+  Upgrade Station test). Not reproduced with Get In / Get Out on Level18, with or without an
+  upgrade in between: waiting for details (which vehicle, where it stood).
 
 - Rock falls when breaking into a cave (the outside-corner animation) don't look right.
 - Interrupting a task when a unit is selected: two flag states in `Message_SelectObject` that

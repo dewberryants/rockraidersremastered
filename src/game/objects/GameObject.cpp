@@ -465,6 +465,8 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         } else {
             o.SetActivity(ActivityType::Upgrade);
             if (target) {
+                // Each upgrade plays the station's animation from the start.
+                target->activity = ActivityType::Count;
                 target->SetActivity(ActivityType::Upgrade);
                 target->upgrading = true;
             }

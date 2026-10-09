@@ -588,6 +588,12 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
         if (t->retryTimer > 0.0f) t->retryTimer -= elapsed;
         if (t->target && t->target->removed) t->remove = true;
         if (t->type == TaskType::FindDriver && t->target && t->target->driver && !t->assigned) t->remove = true;
+        // An upgrade the unit has meanwhile got (ordered twice) or can no longer take.
+        if (t->type == TaskType::Upgrade && !t->assigned && t->forUnit &&
+            (t->forUnit->removed || !t->forUnit->stats ||
+             (t->forUnit->type == ObjType::Vehicle ? !ObjectList::CanUpgradeType(*t->forUnit, t->upgradeType, true)
+                                                   : t->forUnit->stats->levels <= t->forUnit->level + 1)))
+            t->remove = true;
         // A unit that stopped working on its task without finishing it (route abandoned, unit
         // selected, removed...) gives the task back.
         if (GameObject* u = t->assigned) {
