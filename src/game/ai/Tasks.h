@@ -105,7 +105,7 @@ public:
     void RemoveZone(int zone);
 
     // Game hooks: stock left in storage, and where a construction site takes deliveries.
-    std::function<bool(ObjType)> hasStock;
+    std::function<bool(ObjType, int zone)> hasStock;
     std::function<bool(int zone, BlockPos& block)> zoneBlock;
 
     // AITask_UpdateAll: assigns pending tasks to idle units and starts them.
@@ -139,9 +139,8 @@ public:
 private:
     bool CanDo(const Task& t, const GameObject& unit, const world::Level& level) const;
     bool VehicleCanCollect(const Task& t, const GameObject& vehicle, const ObjectList* objects) const;
-    // Where a unit takes a load of this type (storage, or a processing building for vehicles
-    // that may not enter tool stores).
-    GameObject* DepositBuilding(const ObjectList& objects, const GameObject& unit, ObjType load) const;
+    // Where a unit takes a load: storage or a building that processes it, by priority.
+    GameObject* DepositBuilding(const ObjectList& objects, const GameObject& unit, const GameObject& load) const;
     bool HasGetToolTask(ToolType tool) const;
     static ToolType ToolFor(TaskType t);
     bool Start(Task& t, GameObject& unit, ObjectList& objects, world::Level& level);

@@ -52,6 +52,7 @@ struct ConstructionZone {
     int dir = 0;
     std::vector<BlockPos> footprint;
     int crystalsNeeded = 0, oreNeeded = 0;
+    bool studs = false;           // oreNeeded counts Building Studs (an Ore Refinery was active)
     int crystalsPlaced = 0, orePlaced = 0;
     std::vector<GameObject*> placed;  // resources dropped on the site
     bool path = false;            // a power path site (type is null)

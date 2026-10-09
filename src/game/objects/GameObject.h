@@ -111,6 +111,8 @@ struct GameObject {
     uint32_t upgradeLevel = 0;             // Upgrade level bits (engine, drill, scan, carry)
     int upgradeType = 0;                   // vehicle: the upgrade it drives to the station for
     bool upgrading = false;                // Upgrade Station: playing Activity_Upgrade (flags2 0x8000)
+    bool processing = false;               // refinery / power station: processing its load (flags1 0x2000)
+    bool waitingToHand = false;            // unit at a busy processing building, holding its load
     // Vehicle_SetPosition: each wheel turns by the distance its own null moved over its radius,
     // backwards when it moved backwards (so animations that shift the body turn them too).
     float wheelSpin[6] = {};
@@ -267,6 +269,16 @@ public:
     // Vehicle_CanUpgradeType: the model has parts for an upgrade level with the type's bit (and,
     // with current, the vehicle does not have it yet).
     static bool CanUpgradeType(const GameObject& v, int type, bool current);
+    // LegoObject_FUN_00439e90 for buildings: an active (powered) building that processes the
+    // object: an Ore Refinery raw ore (not studs), a Power Station charged crystals.
+    static bool ProcessesLoad(const GameObject& building, const GameObject& item);
+    static bool IsProcessor(const GameObject& building);
+    // LegoObject_ProccessCarriedObjects for a unit at a processing building: its load goes onto
+    // the building's carry nulls while there is room (CarryNullFrames) and the building is not
+    // processing. Returns true if the unit has nothing left.
+    bool HandOver(GameObject& unit, GameObject& building);
+    // A processing building has finished processing its load (its Activity_Deposit played).
+    std::function<void(GameObject& building, std::vector<GameObject*> load)> onProcessed;
     // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
     void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 

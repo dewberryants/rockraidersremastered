@@ -70,7 +70,12 @@ public:
         objects_.onExplode = [this](GameObject& d) { ExplodeDynamite(d); };
         objects_.onBoard = [this](GameObject& u, GameObject& v) { OnBoard(u, v); };
         objects_.onDrop = [this](GameObject& u, GameObject& item) { OnDrop(u, item); };
-        tasks_.hasStock = [this](ObjType t) { return t == ObjType::PowerCrystal ? crystals_ > 0 : ore_ > 0; };
+        tasks_.hasStock = [this](ObjType t, int zone) {
+            if (t == ObjType::PowerCrystal) return crystals_ > 0;
+            const ConstructionZone* z = FindZone(zone);
+            return (z && z->studs) ? studs_ > 0 : ore_ > 0;
+        };
+        objects_.onProcessed = [this](GameObject& b, std::vector<GameObject*> load) { Processed(b, std::move(load)); };
         tasks_.zoneBlock = [this](int zone, BlockPos& b) {
             for (const auto& z : zones_)
                 if (z->handle == zone) return SiteApproach(*z, b);
@@ -81,11 +86,13 @@ public:
             if (item.type == ObjType::PowerCrystal) {
                 ++crystals_;
                 ++crystalsPickedUp_;
+            } else if (item.type == ObjType::Ore && item.id == 1) {
+                ++studs_;  // LegoObject_PutAwayCarriedObject: Level_IncOreStored(processed)
             } else if (item.type == ObjType::Ore) {
                 ++ore_;
                 ++orePickedUp_;
             }
-            RR_INFO("Stored %s: crystals %d, ore %d", item.info->name.c_str(), crystals_, ore_);
+            RR_INFO("Stored %s: crystals %d, ore %d, studs %d", item.info->name.c_str(), crystals_, ore_, studs_);
         };
         // Lego_LoadOLObjectList: loose crystals, ore, dynamite and barriers are to be collected.
         for (const auto& o : objects_.objects())
@@ -93,7 +100,7 @@ public:
                 o->type == ObjType::Barrier)
                 tasks_.CreateCollect(*o);
         // Debug set-up for scripted tests: RR_DEBUG_PATH="x,y;..." lays power paths,
-        // RR_DEBUG_STOCK="crystals,ore" fills storage, RR_DEBUG_BUILDLEVEL=n upgrades buildings.
+        // RR_DEBUG_STOCK="crystals,ore[,studs]" fills storage, RR_DEBUG_BUILDLEVEL=n upgrades buildings.
         if (const char* paths = std::getenv("RR_DEBUG_PATH")) {
             for (std::string_view entry : SplitTokens(paths, ";")) {
                 const auto xy = SplitTokens(entry, ",");
@@ -108,6 +115,7 @@ public:
             const auto v = SplitTokens(stock, ",");
             crystals_ = std::atoi(std::string(v[0]).c_str());
             if (v.size() > 1) ore_ = std::atoi(std::string(v[1]).c_str());
+            if (v.size() > 2) studs_ = std::atoi(std::string(v[2]).c_str());
         }
         if (const char* lvl = std::getenv("RR_DEBUG_BUILDLEVEL"))
             for (const auto& o : objects_.objects())
@@ -1040,6 +1048,7 @@ public:
         else if (name == "GetCrystalsCurrentlyStored") return crystals_;
         else if (name == "GetCrystalsPickedUp") return crystalsPickedUp_;
         else if (name == "GetOreCurrentlyStored") return ore_;
+        else if (name == "GetStudCount") return studs_;
         else if (name == "GetOrePickedUp") return orePickedUp_;
         else if (name == "AddStoredOre") return ore_ += args[0];
         else if (name == "GetMiniFiguresOnLevel") return CountObjects("Pilot");
@@ -1169,10 +1178,7 @@ public:
         z->origin = origin;
         z->dir = dir;
         z->footprint = BuildingFootprint(type, origin, dir);
-        if (const ObjectStats* st = GetStats().Find(type.name)) {
-            z->crystalsNeeded = int(st->Num("CostCrystal", 0));
-            z->oreNeeded = int(st->Num("CostOre", 0));
-        }
+        if (const ObjectStats* st = GetStats().Find(type.name)) SetSiteCost(*z, *st);
         for (size_t i = 0; i < z->footprint.size(); ++i) {
             const BlockPos p = z->footprint[i];
             world::Block& blk = level_.block(p.x, p.y);
@@ -1184,12 +1190,64 @@ public:
             level_.UpdateSurface(p.x, p.y);
         }
         // TODO(construction): flatten the ground, barriers around the site.
-        RR_INFO("Construction of %s started (needs %d crystals, %d ore)", type.name.c_str(), z->crystalsNeeded,
-                z->oreNeeded);
+        RR_INFO("Construction of %s started (needs %d crystals, %d %s)", type.name.c_str(), z->crystalsNeeded,
+                z->oreNeeded, z->studs ? "studs" : "ore");
         // Construction_Zone_RequestResource: one fetch per crystal and ore of the cost.
         for (int i = 0; i < z->crystalsNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::PowerCrystal);
         for (int i = 0; i < z->oreNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::Ore);
         zones_.push_back(std::move(z));
+    }
+
+    // LegoObject_UpdateBuildingPlacement / Construction_Zone_RequestPathResources: with an active
+    // Ore Refinery on the level a site asks for CostRefinedOre studs instead of CostOre ore (when
+    // the type has a stud cost).
+    void SetSiteCost(ConstructionZone& z, const ObjectStats& st) const {
+        z.crystalsNeeded = int(st.Num("CostCrystal", 0));
+        const int studs = int(st.Num("CostRefinedOre", 0));
+        bool refinery = false;
+        for (const auto& o : objects_.objects())
+            if (o->type == ObjType::Building && o->stats && (o->stats->F1(o->level) & StatsFlag1::ProcessOre) &&
+                BuildingActive(*o))
+                refinery = true;
+        z.studs = refinery && studs > 0;
+        z.oreNeeded = z.studs ? studs : int(st.Num("CostOre", 0));
+    }
+
+    const ConstructionZone* FindZone(int handle) const {
+        for (const auto& z : zones_)
+            if (z->handle == handle) return z.get();
+        return nullptr;
+    }
+
+    // LegoObject_ProccessCarriedObjects for a processing building: an Ore Refinery turns its
+    // first piece of ore into a Building Stud, dropped at its deposit null to be collected, and
+    // uses up the rest of the batch up to MaxCarry (more would be stored as ore). A Power
+    // Station stores the crystals it was given.
+    void Processed(GameObject& b, std::vector<GameObject*> load) {
+        const int maxCarry = int(b.stats->Num("MaxCarry", b.level, 1.0f));
+        for (size_t i = 0; i < load.size(); ++i) {
+            GameObject& item = *load[i];
+            if (item.type == ObjType::Ore) {
+                ++orePickedUp_;
+                if (i == 0) {
+                    Vec3f at = b.position;
+                    Vec2 dir;
+                    if (b.info && b.info->model.activities)
+                        objects_.NullPoint(b, b.info->model.activities->depositNull, at, dir);
+                    if (const ObjectTypeInfo* stud = GetObjectRegistry().Get(ObjType::Ore, 1))
+                        if (GameObject* s = objects_.Spawn(*stud, at.x, at.y)) tasks_.CreateCollect(*s);
+                } else if (int(i) >= maxCarry) {
+                    ++ore_;
+                }
+            } else if (item.type == ObjType::PowerCrystal) {
+                ++crystals_;
+                ++crystalsPickedUp_;
+                power_.Request();
+            }
+            objects_.Remove(item);
+        }
+        RR_INFO("%s processed %zu objects (crystals %d, ore %d, studs %d)", b.info->name.c_str(), load.size(),
+                crystals_, ore_, studs_);
     }
 
     // Construction_Zone_StartPath: the block shows a laid path and waits for the path's cost.
@@ -1199,11 +1257,7 @@ public:
         z->origin = b;
         z->footprint = {b};
         z->path = true;
-        if (const ObjectStats* st = GetStats().Find("Path")) {
-            z->crystalsNeeded = int(st->Num("CostCrystal", 0));
-            // TODO(refinery): refined ore instead when an ore refinery exists.
-            z->oreNeeded = int(st->Num("CostOre", 0));
-        }
+        if (const ObjectStats* st = GetStats().Find("Path")) SetSiteCost(*z, *st);
         level_.block(b.x, b.y).flags |= world::BlockFlag::LaidPath;
         level_.UpdateSurface(b.x, b.y);
         for (int i = 0; i < z->crystalsNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::PowerCrystal);
@@ -1263,9 +1317,12 @@ public:
 
     // A unit at a storage building takes one resource out of stock and carries it away.
     GameObject* FetchFromStore(GameObject& unit) {
-        int& stock = unit.fetchType == ObjType::PowerCrystal ? crystals_ : ore_;
+        // Sites that asked for refined ore are brought Building Studs.
+        const ConstructionZone* z = FindZone(unit.deliverZone);
+        const bool studs = unit.fetchType == ObjType::Ore && z && z->studs;
+        int& stock = unit.fetchType == ObjType::PowerCrystal ? crystals_ : (studs ? studs_ : ore_);
         if (stock <= 0) return nullptr;
-        const ObjectTypeInfo* info = GetObjectRegistry().Get(unit.fetchType, 0);
+        const ObjectTypeInfo* info = GetObjectRegistry().Get(unit.fetchType, studs ? 1 : 0);
         if (!info) return nullptr;
         --stock;
         return objects_.Spawn(*info, unit.position.x, unit.position.y);

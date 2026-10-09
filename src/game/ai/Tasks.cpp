@@ -97,7 +97,25 @@ float DrillTime(const GameObject& unit, int terrain) {
 
 void TaskSystem::Reset() {
     tasks_.clear();
-    priorityValue_.fill(0);
+    // AITask_Initialise: the values of priorities a level does not list. (The game keeps
+    // values from earlier levels; each level starts from these here.)
+    priorityValue_.fill(49);
+    auto set = [&](PriorityType p, int v) { priorityValue_[size_t(p)] = v; };
+    set(PriorityType::Crystal, 55);
+    set(PriorityType::Destruction, 40);
+    set(PriorityType::Construction, 60);
+    set(PriorityType::Request, 20);
+    set(PriorityType::Reinforce, 70);
+    set(PriorityType::Clearing, 20);
+    set(PriorityType::Storage, 5);
+    set(PriorityType::Refining, 15);
+    set(PriorityType::AttackRockMonster, 56);
+    set(PriorityType::UpgradeBuilding, 99);
+    set(PriorityType::Steal, 90);
+    set(PriorityType::Depart, 0);
+    set(PriorityType::AttackPath, 20);
+    set(PriorityType::AttackObject, 30);
+    set(PriorityType::Congregate, 99);
     priorityOff_.fill(false);
     order_.clear();
     initialOrder_.clear();
@@ -365,7 +383,7 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
         return (b.flags & world::BlockFlag::Ground) && !(b.flags & world::BlockFlag::CleanFloor);
     }
     case TaskType::Collect: return t.target && !t.target->removed && !t.target->carrier && !t.target->hidden;
-    case TaskType::Request: return !hasStock || hasStock(t.resource);
+    case TaskType::Request: return !hasStock || hasStock(t.resource, t.zone);
     case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
     case TaskType::GetTool: return t.tool != ToolType::Count && !unit.HasTool(t.tool);
     case TaskType::Train: return t.target && !t.target->removed && !(unit.abilities & t.ability);
@@ -396,25 +414,34 @@ bool TaskSystem::VehicleCanCollect(const Task& t, const GameObject& v, const Obj
     if (item->type != ObjType::Ore && item->type != ObjType::PowerCrystal) return false;
     if (item->id != 0 || (item->type == ObjType::PowerCrystal && item->crystalDrained)) return false;
     if (!v.cargo.empty() && v.cargo.front()->type != item->type) return false;
-    return objects && DepositBuilding(*objects, v, item->type);
+    return objects && DepositBuilding(*objects, v, *item);
 }
 
-GameObject* TaskSystem::DepositBuilding(const ObjectList& objects, const GameObject& u, ObjType load) const {
-    // Vehicles that may not drive into tool stores take resources to a building that processes
-    // them (LegoObject_FindResourceProcessingBuilding).
-    const bool processorOnly =
-        u.type == ObjType::Vehicle && !(u.stats && (u.stats->F3(u.level) & StatsFlag3::EnterToolStore));
-    if (!processorOnly) return NearestStore(objects, u);
-    const uint32_t need = load == ObjType::Ore ? StatsFlag1::ProcessOre : StatsFlag1::ProcessCrystal;
+GameObject* TaskSystem::DepositBuilding(const ObjectList& objects, const GameObject& u, const GameObject& load) const {
+    // The deposit tasks every building posts on arrival (LegoObject_FUN_00438720): storage
+    // buildings take anything at Storage priority, an active building that processes the load
+    // (ore refinery: raw ore, power station: crystals) takes it at Refining priority. The highest
+    // priority wins, then the nearest. Vehicles that may not drive into tool stores only use
+    // processing buildings (LegoObject_FindResourceProcessingBuilding).
+    const bool storeOk =
+        u.type != ObjType::Vehicle || (u.stats && (u.stats->F3(u.level) & StatsFlag3::EnterToolStore));
     GameObject* best = nullptr;
+    int bestPrio = 0;
     float bestD = 0.0f;
     for (const auto& bp : objects.objects()) {
         const GameObject& b = *bp;
-        if (b.type != ObjType::Building || b.removed || b.hidden || !b.stats || !(b.stats->F1(b.level) & need)) continue;
+        int prio = -1;
+        if (storeOk && IsStorageBuilding(b) && !priorityOff_[size_t(PriorityType::Storage)])
+            prio = priorityValue_[size_t(PriorityType::Storage)];
+        if (ObjectList::ProcessesLoad(b, load) && !priorityOff_[size_t(PriorityType::Refining)])
+            prio = std::max(prio, priorityValue_[size_t(PriorityType::Refining)]);
+        if (prio < 0) continue;
         const float dx = b.position.x - u.position.x, dy = b.position.y - u.position.y;
-        if (!best || dx * dx + dy * dy < bestD) {
+        const float d = dx * dx + dy * dy;
+        if (!best || prio > bestPrio || (prio == bestPrio && d < bestD)) {
             best = bp.get();
-            bestD = dx * dx + dy * dy;
+            bestPrio = prio;
+            bestD = d;
         }
     }
     return best;
@@ -627,11 +654,11 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
         // A vehicle's load goes to storage once it is full or the vehicle has stood still.
         GameObject* load = u.carried ? u.carried : (ObjectList::LoadReady(u) ? u.cargo.front() : nullptr);
         if (load) {
-            // Deliver what it carries to the nearest store (AITask_DoDeposit,
+            // Deliver what it carries to storage or a processing building (AITask_DoDeposit,
             // LegoObject_TryDepositCarried). Buildings that store objects are walked into, to their
             // tool null (always instance 4); others are approached at their deposit null, facing
             // into the building.
-            GameObject* best = DepositBuilding(objects, u, load->type);
+            GameObject* best = DepositBuilding(objects, u, *load);
             BlockPos from, to;
             std::vector<BlockPos> route;
             Vec3f np;

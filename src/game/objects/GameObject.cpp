@@ -304,6 +304,28 @@ void ObjectList::Update(float elapsed) {
             if (onExplode) onExplode(o);
             continue;
         }
+        // LegoObject_FUN_0043bde0: a processing building with a full load (an ore refinery
+        // min(CarryNullFrames, MaxCarry) ore, a power station any) plays Activity_Deposit, and
+        // processes the load when it ends (LegoObject_ProccessCarriedObjects).
+        if (IsProcessor(o) && !o.processing && !o.cargo.empty()) {
+            size_t need = o.cargo.size();
+            if (o.stats->F1(o.level) & StatsFlag1::ProcessOre) {
+                const int cap = o.info && o.info->model.activities ? o.info->model.activities->carryNullFrames : 0;
+                need = size_t(std::max(1, std::min(cap, int(o.stats->Num("MaxCarry", o.level, 1.0f)))));
+            }
+            if (o.cargo.size() >= need) {
+                o.processing = true;
+                o.activity = ActivityType::Count;  // restart even if it is still showing
+                o.SetActivity(ActivityType::Deposit, 1);
+            }
+        } else if (o.processing && o.animOverrun > 0.0f) {
+            o.processing = false;
+            o.SetActivity(ActivityType::Stand);
+            std::vector<GameObject*> load = std::move(o.cargo);
+            o.cargo.clear();
+            for (GameObject* item : load) item->carrier = nullptr;
+            if (onProcessed) onProcessed(o, std::move(load));
+        }
         // The Upgrade Station goes back to standing once its upgrade animation has played.
         if (o.upgrading && o.animOverrun > 0.0f) {
             o.upgrading = false;
@@ -340,9 +362,13 @@ void ObjectList::Update(float elapsed) {
         Vec2 dir;
         const ObjectModel* cm = c.info ? &c.info->model : nullptr;
         // Vehicles hold each object on carry null CarryStart + slot.
-        const bool vehicle = c.type == ObjType::Vehicle;
-        const int instance = vehicle ? int(c.stats ? c.stats->Num("CarryStart", c.level) : 0.0f) + o.carrySlot : 0;
-        if (cm && cm->activities && NullPoint(c, cm->activities->carryNull, o.position, dir, instance, vehicle)) {
+        // Processing buildings hold their load on carry null slot.
+        const bool vehicle = c.type == ObjType::Vehicle, building = c.type == ObjType::Building;
+        const int instance = vehicle    ? int(c.stats ? c.stats->Num("CarryStart", c.level) : 0.0f) + o.carrySlot
+                             : building ? o.carrySlot
+                                        : 0;
+        if (cm && cm->activities &&
+            NullPoint(c, cm->activities->carryNull, o.position, dir, instance, vehicle || building)) {
             o.heading = std::atan2(dir.x, dir.y);
         } else {
             o.position = {c.position.x + c.faceDir.x * 4.0f, c.position.y + c.faceDir.y * 4.0f, c.position.z - 8.0f};
@@ -398,6 +424,37 @@ int ObjectList::CargoCapacity(const GameObject& v) {
     const ActivityModel* am = v.info ? v.info->model.activities.get() : nullptr;
     const int maxCarry = v.stats ? int(v.stats->Num("MaxCarry", v.level)) : 0;
     return std::min(maxCarry, am ? am->carryNullFrames : 0);
+}
+
+bool ObjectList::IsProcessor(const GameObject& b) {
+    return b.type == ObjType::Building && b.stats &&
+           (b.stats->F1(b.level) & (StatsFlag1::ProcessOre | StatsFlag1::ProcessCrystal));
+}
+
+bool ObjectList::ProcessesLoad(const GameObject& b, const GameObject& item) {
+    if (b.type != ObjType::Building || b.removed || b.hidden || b.teleportingIn || !b.stats || !b.powered) return false;
+    const uint32_t f1 = b.stats->F1(b.level);
+    if (item.type == ObjType::Ore) return (f1 & StatsFlag1::ProcessOre) && item.id == 0;
+    if (item.type == ObjType::PowerCrystal) return (f1 & StatsFlag1::ProcessCrystal) && !item.crystalDrained;
+    return false;
+}
+
+bool ObjectList::HandOver(GameObject& unit, GameObject& b) {
+    const int capacity = b.info && b.info->model.activities ? b.info->model.activities->carryNullFrames : 0;
+    auto take = [&](GameObject& item) {
+        if (b.processing || int(b.cargo.size()) >= capacity) return false;
+        item.carrier = &b;
+        item.carrySlot = int(b.cargo.size());
+        b.cargo.push_back(&item);
+        return true;
+    };
+    if (unit.carried) {
+        if (!take(*unit.carried)) return false;
+        unit.carried = nullptr;
+    }
+    while (!unit.cargo.empty() && take(*unit.cargo.front())) unit.cargo.erase(unit.cargo.begin());
+    for (size_t i = 0; i < unit.cargo.size(); ++i) unit.cargo[i]->carrySlot = int(i);
+    return unit.cargo.empty();
 }
 
 bool ObjectList::CanUpgradeType(const GameObject& v, int type, bool current) {
@@ -500,6 +557,12 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         o.SetActivity(ActivityType::Collect);
         break;
     case RouteAction::Deposit:
+        if (o.type == ObjType::Vehicle && target && IsProcessor(*target)) {
+            // A processing building takes what fits; the rest stays on board for later.
+            HandOver(o, *target);
+            FinishAction(o, true);
+            break;
+        }
         if (o.type == ObjType::Vehicle) {
             // LegoObject_ProccessCarriedObjects: the whole load is handed over at once.
             GameObject* building = target;
@@ -565,6 +628,7 @@ int StatSound(const GameObject& o, std::string_view key) {
 }  // namespace
 
 void ObjectList::FinishAction(GameObject& o, bool success) {
+    o.waitingToHand = false;
     if (o.drillSound >= 0) {
         // Drilling stopped: the loop is cut and the drill winds down.
         GetSfx().Stop(o.drillSound);
@@ -713,9 +777,18 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         break;
     case UnitState::Depositing:
         if (o.triggered && o.carried && o.activity == ActivityType::Place) PlacedSound(*o.carried);
-        if (o.animOverrun > 0.0f) {
+        if (o.animOverrun > 0.0f || o.waitingToHand) {
             GameObject* building = o.stateTarget;
-            if (o.carried && building) {
+            if (o.carried && building && IsProcessor(*building)) {
+                // The load goes onto the building; while it is full or processing the unit
+                // stands and waits (flags1 0x4000).
+                if (HandOver(o, *building)) {
+                    FinishAction(o, true);
+                } else if (!o.waitingToHand) {
+                    o.waitingToHand = true;
+                    o.SetActivity(ActivityType::CarryStand);
+                }
+            } else if (o.carried && building) {
                 GameObject& item = *o.carried;
                 o.carried = nullptr;
                 item.carrier = nullptr;

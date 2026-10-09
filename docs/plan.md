@@ -23,9 +23,9 @@ Playable: Level 1 start to finish, and the early missions as far as their system
   `RR_DEBUG_PATH="x,y;..."` lays power paths; `RR_DEBUG_UPGRADE="tick,type"` sends the first
   vehicle and the first raider on foot for an upgrade).
 
-**Next: milestone 2, building functions.** Step 1 (building upgrades) is play-tested; step 2
-(Upgrade Station: vehicle and Rock Raider upgrades) is built and waits for the play-test. Then
-the further building functions (step 3), starting with the Ore Refinery.
+**Next: milestone 2, building functions.** Steps 1 and 2 (building upgrades, Upgrade Station)
+are play-tested; step 3 (Ore Refinery) is built and waits for the play-test. Then the rest of
+step 4, starting with the Support Station or power-off bubbles.
 
 ## How we work
 
@@ -96,7 +96,7 @@ vehicles carrying barriers, the get-in mouse pointer, reversing and turning (mil
 
 ## 2. Building functions (next)
 
-Test: `scripts\test-buildings.bat` (Level18: Tool Store, Power Station, Teleport Pad, Support
+Tests: `scripts\test-refinery.bat` (below) and `scripts\test-buildings.bat` (Level18: Tool Store, Power Station, Teleport Pad, Support
 Station, two Mining Lasers, Geological Center; added an Upgrade Station at 19,30 with power
 paths to it and the Tool Store, a Small Digger, Hover Scout and Small Truck, three trained
 raiders; 10 crystals and 50 ore). Level18 has no raiders of its own and its Power Station
@@ -117,7 +117,7 @@ reaches nothing without the added paths.
    a part is a weapon name, not a parent: the Mining Laser turret and the Large Digger's laser
    were skipped before and are drawn now. Not done: the help window text
    (`HelpWindow_RecallDependencies`), the turret's fire and pivot nulls (milestone 3).
-2. **Upgrade Station** (play-tested once; fixes below wait for the next test). `AITask_DoUpgrade` makes an Upgrade
+2. **Upgrade Station** (play-tested). `AITask_DoUpgrade` makes an Upgrade
    task (0x15) only the ordering unit takes; buildings must be active (`LegoObject_IsActive`:
    standing and powered, flags3 0x20000000).
    - *Rock Raiders* (UpgradeMan, item 0x40): enabled with another level to go, empty hands and
@@ -149,9 +149,28 @@ reaches nothing without the added paths.
      add "(UP1)".. from UpgradeNames); a Rock Raider's adds its tools with blank slots up to
      NumOfToolsCanCarry, and its skills (`ToolTipIcons`). Not yet: the hover delay, health,
      a vehicle's driver name, the tooltip sound.
-3. **Further building functions:**
-   - **Ore Refinery:** turns ore into refined ore (studs). The side bar's stud display, and
-     `CostRefinedOre` for buildings that ask for it.
+3. **Ore Refinery** (built, waiting for the play-test; `scripts\test-refinery.bat`).
+   - *Where loads go:* every building posts a deposit task on arrival (`LegoObject_FUN_00438720`):
+     storage takes anything at Storage priority, an active Ore Refinery raw ore and a Power
+     Station charged crystals at Refining priority. Units take the highest priority, then the
+     nearest (`TaskSystem::DepositBuilding`). Unlisted priorities now start from the game's
+     defaults (`AITask_Initialise`: Crystal 55, Construction 60, Reinforce 70, Storage 5,
+     Refining 15, Request 20, Clearing 20, Destruction 40, most others 49) instead of 0, so
+     ore goes to a refinery and crystals to a Power Station before the Tool Store.
+   - *Processing:* the unit throws its load onto the building's carry nulls (CarryNullFrames,
+     6 on the refinery) and waits while it is full or busy (flags1 0x4000). A refinery with
+     min(CarryNullFrames, MaxCarry 5/4/3/2) ore, a power station with any crystal, plays
+     Activity_Deposit once (`LegoObject_FUN_0043bde0`) and then processes the load
+     (`LegoObject_ProccessCarriedObjects`): the refinery's first ore becomes a Building Stud
+     (Ore id 1) at its deposit null, to be collected and stored at the Tool Store as a stud;
+     the rest of the batch is used up. Crystals given to a power station are stored.
+   - *Studs:* `studs_` (side bar shows ore + 5 x studs, `GetStudCount`). A site started while an
+     active refinery exists asks for CostRefinedOre studs instead of CostOre ore when the type
+     has a stud cost (`LegoObject_UpdateBuildingPlacement`, `Construction_Zone_RequestPathResources`);
+     its fetches bring studs. Building upgrades fall back to 1 stud without 5 ore.
+   - Not yet: the "Building Studs" side bar text, the help window, collected-object counts
+     exactly as the game keeps them (ore counts as picked up when stored or refined).
+4. **Further building functions:**
    - **Support Station:** oxygen supply (`OxygenCoef`) and raiders eating to restore energy
      (GoFeed, Eat).
    - **Geological Center:** scanning reveals the map around it (ScanRange) and on the radar.
@@ -220,6 +239,8 @@ Bulldozer has no EnterToolStore, so it delivers only to ProcessOre / ProcessCrys
 
 - **Modern Graphics options** Anti-Aliasing, Ambient Occlusion, Bloom, Shaders that allow for
   emission, reflection, etc. such that lego pieces actually look plastic-y
+
+- **Cross-Platform Compatiblity** Should run on Windows, Linux, Mac, Arm, etc.
 
 ## 9. Balance and Gameplay Changes
 
