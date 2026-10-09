@@ -31,9 +31,9 @@ bool BlockOfObject(const world::Level& level, const GameObject& o, int& bx, int&
 CrossType GetCrossTerrainType(const world::Level& level, const GameObject* obj, int bx1, int by1, int bx2, int by2,
                               bool ignoreOwnBlock) {
     using namespace world;
-    // Vehicles that need a driver cannot route on their own.
-    // TODO(vehicles): allow once drivers are tracked.
-    if (obj && obj->stats && (obj->stats->F1(obj->level) & StatsFlag1::CanBeDriven)) return CrossType::Blocked;
+    // Vehicles that need a driver cannot route without one.
+    if (obj && obj->stats && (obj->stats->F1(obj->level) & StatsFlag1::CanBeDriven) && !obj->driver)
+        return CrossType::Blocked;
 
     // Which neighbour block 2 is of block 1 (4 = not a straight neighbour).
     int side = 0;

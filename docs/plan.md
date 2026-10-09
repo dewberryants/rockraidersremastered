@@ -30,13 +30,12 @@ report. Behaviour comes from the decompiled game; where we deliberately differ, 
 
 ## 1. Vehicles and drivers (in progress)
 
-What is done: teleporting vehicles in, their models, the unmanned vehicle menu.
-
-Getting in and out is built and waiting for the user's play-test (see below).
+What is done: teleporting vehicles in, their models, the unmanned vehicle menu, getting in and
+out (play-tested). Driving is built and waiting for the user's play-test.
 
 Next:
 
-1. **Getting in and out** (built, awaiting play-test). Get In (menu) creates a FindDriver task
+1. **Getting in and out** (done). Get In (menu) creates a FindDriver task
    (priority GetIn) any raider with the skill takes; clicking an unmanned vehicle with a trained
    raider selected sends that raider. Skill: NeedsPilot or land+water → Pilot, land → Driver,
    water → Sailor. The raider walks onto the vehicle's position and boards at once
@@ -47,9 +46,13 @@ Next:
    Test setup: `scripts	est-vehicles.bat` (Level02, three vehicles, every raider trained). Still open: water vehicles (docks, GetInAtLand/GetOutAtLand), several selected
    raiders answering a click, dropping a carried load first, TakeCarryingDrivers, the get-in
    pointer.
-2. **Driving.** Selected vehicles go where you click, with their own route speed and terrain
-   rules (`CrossLand`, `CrossWater`, `CrossLava`). They play Route, Reverse, StartUp and ShutDown.
-   The engine sound loops while moving (`StatsObject_GetEngineSound`).
+2. **Driving** (built, awaiting play-test). Driven vehicles route like units
+   (`Lego_GetCrossTerrainType` only blocks CanBeDriven vehicles without a driver) with their own
+   RouteSpeed and terrain rules, and play Activity_Route. The original never plays StartUp or
+   ShutDown (no such activity in the exe). EngineSound loops on every vehicle and building from
+   arrival until removal, driven or not (`LegoObject_FUN_00438720`); one buffer per sample, so the
+   latest object with that sound takes it. Reverse (route flag 2) is left for milestone 7.
+   Test: `scripts	est-vehicles.bat`.
 3. **Vehicle jobs.**
    - Drilling vehicles take dig tasks (Small Digger, Chrome Crusher, Walker): drill times, drill
      null, drill sounds.

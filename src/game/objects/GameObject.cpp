@@ -290,6 +290,7 @@ void ObjectList::Update(float elapsed) {
             if (onExplode) onExplode(o);
             continue;
         }
+        if (!o.teleportingIn) UpdateEngineSound(o);
         if (o.teleportingIn) {
             // Arrived once the beam-in animation has played through.
             if (o.animOverrun > 0.0f) {
@@ -465,6 +466,9 @@ void ObjectList::Remove(GameObject& o) {
     if (o.driver) o.driver->driving = nullptr;
     if (o.driving) o.driving->driver = nullptr;
     o.driver = o.driving = nullptr;
+    // LegoObject_Remove: the engine loop stops.
+    if (o.engineSound >= 0 && GetSoundBank().VoiceOf(o.engineSound) == o.engineVoice) GetSfx().Stop(o.engineSound);
+    o.engineSound = -1;
     for (auto& op : objects_) {
         if (op->stateTarget == &o) op->stateTarget = nullptr;
         if (op->teleportService == &o) op->teleportService = nullptr;
@@ -884,6 +888,28 @@ void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsS
             DrawPose(r, *pm.scene, pp, mp);
         }
     }
+}
+
+void ObjectList::UpdateEngineSound(GameObject& o) {
+    if (o.type != ObjType::Vehicle && o.type != ObjType::Building) return;
+    const Vec3 at{o.position.x, o.position.y, o.position.z};
+    if (!o.engineStarted) {
+        // LegoObject_FUN_00438720: once a vehicle or building has arrived, its EngineSound loops
+        // on it until it is removed, driven or not. Samples have one buffer, so the latest
+        // object with the same sound takes it over.
+        o.engineStarted = true;
+        const int id = StatSound(o, "EngineSound");
+        if (id < 0) return;
+        o.engineSound = GetSfx().PlayAt(id, at, true);
+        o.engineVoice = GetSoundBank().VoiceOf(o.engineSound);
+        return;
+    }
+    if (o.engineSound < 0) return;
+    if (GetSoundBank().VoiceOf(o.engineSound) != o.engineVoice) {
+        o.engineSound = -1;  // another object restarted the buffer
+        return;
+    }
+    GetSoundBank().SetPlayPosition(o.engineSound, at);
 }
 
 uint32_t ObjectList::DriverAbility(const GameObject& v) {

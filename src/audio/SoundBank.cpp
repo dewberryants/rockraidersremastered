@@ -82,6 +82,26 @@ void SoundBank::StopPlay(int playHandle) {
     v = Mixer::kInvalidVoice;
 }
 
+void SoundBank::SetPlayPosition(int playHandle, const Vec3& pos) {
+    if (playHandle < 0) return;
+    const int idx = playHandle / kMaxDuplicates, dup = playHandle % kMaxDuplicates;
+    if (idx >= int(samples_.size())) return;
+    const Sample& s = samples_[size_t(idx)];
+    const Mixer::VoiceId v = s.voices[size_t(dup)];
+    Mixer& mixer = GetMixer();
+    if (v == Mixer::kInvalidVoice || !mixer.IsPlaying(v)) return;
+    float g = 1.0f, pan = 0.0f;
+    Positional(pos, g, pan);
+    mixer.SetGain(v, DirectSoundVolumeToGain(s.volume) * DirectSoundVolumeToGain(globalVolume_) * g);
+    mixer.SetPan(v, pan);
+}
+
+uint32_t SoundBank::VoiceOf(int playHandle) const {
+    if (playHandle < 0) return Mixer::kInvalidVoice;
+    const int idx = playHandle / kMaxDuplicates, dup = playHandle % kMaxDuplicates;
+    return idx < int(samples_.size()) ? samples_[size_t(idx)].voices[size_t(dup)] : Mixer::kInvalidVoice;
+}
+
 void SoundBank::StopAll() {
     GetMixer().StopAll();
     for (auto& s : samples_) s.voices.fill(Mixer::kInvalidVoice);

@@ -89,6 +89,9 @@ struct GameObject {
     std::vector<ToolType> tools;           // minifigure tool belt, oldest first
     ToolType wantedTool = ToolType::Count; // tool to pick up at the tool store
     int drillSound = -1;                   // play handle of the looping drill sound
+    int engineSound = -1;                  // play handle of the looping engine / building hum
+    uint32_t engineVoice = 0;              // its voice, to notice another object taking the buffer
+    bool engineStarted = false;            // LegoObject_FUN_00438720 has asked for it
     bool triggered = false;                // the animation passed its TRIGGER frame this tick
     uint32_t abilities = 0;                // trained skills (Ability)
     bool ticking = false;                  // dynamite: lit, explodes when TickDown ends
@@ -232,6 +235,8 @@ private:
                           const Mat4& world) const;
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);
+    // Starts the engine loop once the object has arrived and keeps it on the object.
+    void UpdateEngineSound(GameObject& o);
     // LegoObject_UpdateActivityChange: the driver plays "<vehicle activity><vehicle type>".
     void SetDriverAnim(const GameObject& vehicle);
     // LegoObject_UpdateDriverStickyPosition: the driver sits on the vehicle's driver null.

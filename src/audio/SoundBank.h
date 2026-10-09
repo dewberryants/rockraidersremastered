@@ -30,6 +30,10 @@ public:
     // Returns a play handle (sample index * 3 + duplicate) or -1. pos is used for OnPos/OnFrame.
     int Play(Handle sample, SoundPlay mode, bool loop, const Vec3* pos = nullptr);
     void StopPlay(int playHandle);
+    // Moves a positional sound that is still playing (Sound3D on a moving container).
+    void SetPlayPosition(int playHandle, const Vec3& pos);
+    // The voice behind a play handle; it changes when the buffer is restarted by another play.
+    uint32_t VoiceOf(int playHandle) const;
     void StopAll();
     float PlayTimeSeconds(Handle sample) const;
 
