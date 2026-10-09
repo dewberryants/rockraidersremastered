@@ -66,6 +66,7 @@ public:
         objects_.onPlace = [this](GameObject& u, GameObject& item) { PlaceOnSite(u, item); };
         objects_.onBuildPath = [this](GameObject&, BlockPos b) { FinishPath(b); };
         objects_.onExplode = [this](GameObject& d) { ExplodeDynamite(d); };
+        objects_.onBoard = [this](GameObject& u, GameObject& v) { OnBoard(u, v); };
         tasks_.hasStock = [this](ObjType t) { return t == ObjType::PowerCrystal ? crystals_ > 0 : ore_ > 0; };
         tasks_.zoneBlock = [this](int zone, BlockPos& b) {
             for (const auto& z : zones_)
@@ -300,6 +301,19 @@ public:
         MouseRay(in.mouseX(), in.mouseY(), origin, dir);
         // Objects that can't be selected (crystals, ore...) don't take the click from the block behind.
         if (GameObject* o = objects_.PickObject(origin, dir, &Selection::IsSelectable)) {
+            // A driver stands for its vehicle.
+            if (o->driving) o = o->driving;
+            // Lego_HandleWorld: a selected Rock Raider with the skill is sent to get in.
+            const GameObject* primary = selection_.Primary();
+            if (o->type == ObjType::Vehicle && !o->driver && primary && primary->type == ObjType::MiniFigure &&
+                (primary->abilities & ObjectList::DriverAbility(*o))) {
+                GameObject& unit = *selection_.Primary();
+                // TODO(vehicles): every selected unit may answer (AITask_UnkInitRouting_FUN_00402530),
+                // and carried loads are dropped first.
+                if (Task* t = tasks_.CreateFindDriver(*o); t && !unit.carried) tasks_.AssignTo(*t, unit, objects_, level_);
+                panel.BackToMain();
+                return;
+            }
             // The unit's menu opens when the selection is made (after the clear).
             messages_.Post(MessageType::ClearSelection);
             messages_.Post(MessageType::Select, o);
@@ -472,6 +486,23 @@ public:
                 return false;
             return blk.terrain != Terrain::Lava && blk.terrain != Terrain::Lake;
         }
+        case MenuItem::GetIn: {
+            // Interface_HandleMenuItem (GetIn): nobody on the way yet, and a unit trained for it.
+            // TODO(vehicles): boats only from a dock, or from land beside them (GetInAtLand).
+            const GameObject* v = selection_.Primary();
+            if (!v || v->type != ObjType::Vehicle || v->driver || tasks_.HasFindDriver(*v)) return false;
+            const uint32_t a = ObjectList::DriverAbility(*v);
+            if (a == Ability::Sailor) return false;
+            for (const auto& o : objects_.objects())
+                if (!o->removed && o->type == ObjType::MiniFigure && (o->abilities & a)) return true;
+            return false;
+        }
+        case MenuItem::GetOut: {
+            // Not while moving; boats need land beside them (TODO(water)).
+            const GameObject* v = selection_.Primary();
+            return v && v->driver && !v->routing && v->stats &&
+                   (v->stats->F1(v->level) & StatsFlag1::CanBeDriven) && (v->stats->F1(v->level) & StatsFlag1::CrossLand);
+        }
         case MenuItem::TeleportMan: {
             // A building that can beam Rock Raiders in, and room in the queue.
             if (teleportQueue_.size() >= kMaxTeleportQueue) return false;
@@ -543,6 +574,14 @@ public:
             // Lego_TryTeleportObject: Rock Raiders wait for a teleporter (LegoObject_QueueTeleport).
             if (const ObjectTypeInfo* pilot = GetObjectRegistry().Get(ObjType::MiniFigure, 0))
                 if (teleportQueue_.size() < kMaxTeleportQueue) teleportQueue_.push_back(pilot);
+            break;
+        case MenuItem::GetIn:
+            // Interface_DoAction: the selection is dropped and any trained unit answers the call.
+            if (GameObject* v = selection_.Primary()) tasks_.CreateFindDriver(*v);
+            break;
+        case MenuItem::GetOut:
+            if (GameObject* v = selection_.Primary())
+                if (objects_.GetOut(*v)) RR_DEBUG("Driver out of %s", v->info->name.c_str());
             break;
         case MenuItem::DeselectDig:
             // The request goes, and whoever was on their way or drilling stops.
@@ -1126,12 +1165,26 @@ public:
         }
     }
 
+    // A unit got into a vehicle. It leaves the selection (ours: the game keeps no selected unit
+    // inside a vehicle), and a vehicle selected on its own switches to its driven menu
+    // (Interface_ChangeMenu_IfVehicleMounted_IsLiveObject).
+    void OnBoard(GameObject& unit, GameObject& vehicle) {
+        if (!GetGame().iconPanel) return;
+        IconPanel& panel = *GetGame().iconPanel;
+        if (selection_.Deselect(unit) && selection_.empty() && panel.menu() == MenuType::LegoMan) panel.BackToMain();
+        if (panel.menu() == MenuType::UnmannedVehicle && selection_.IsSelected(vehicle)) {
+            if (selection_.units().size() == 1) panel.OpenMenu(UnitMenu(vehicle));
+            else panel.BackToMain();
+        }
+    }
+
     static MenuType UnitMenu(const GameObject& o) {
         switch (o.type) {
         case ObjType::MiniFigure: return MenuType::LegoMan;
         case ObjType::Vehicle:
-            // TODO(vehicles): water vehicles have their own menu.
-            return o.driver ? MenuType::Vehicle : MenuType::UnmannedVehicle;
+            if (!o.driver) return MenuType::UnmannedVehicle;
+            return o.stats && !(o.stats->F1(o.level) & StatsFlag1::CrossLand) ? MenuType::WaterVehicle
+                                                                              : MenuType::Vehicle;
         case ObjType::Building: return MenuType::Building;
         case ObjType::ElectricFence: return MenuType::ElectricFence;
         default: return MenuType::Main;
@@ -1154,10 +1207,9 @@ public:
                 }
                 GetGame().iconPanel->OpenMenu(UnitMenu(o));
                 // Message_SelectObject: units answer "yes sir" (vehicles only with a driver).
-                // TODO(vehicles): driven vehicles answer too.
                 int sfx = 0;
                 if ((o.flags3 & ObjFlag3::CanYesSir) &&
-                    !(o.stats && (o.stats->F1(o.level) & StatsFlag1::CanBeDriven)) &&
+                    (o.driver || !(o.stats && (o.stats->F1(o.level) & StatsFlag1::CanBeDriven))) &&
                     GetSfx().GetType("SFX_YesSir", sfx))
                     GetSfx().PlayAt(sfx, Vec3{o.position.x, o.position.y, o.position.z});
             }
@@ -1182,8 +1234,10 @@ public:
             break;
         case MessageType::UserGoto:
             // TODO(ai): AITask_QueueGotoBlock_Group; for now each unit routes directly.
-            for (GameObject* o : selection_.units())
+            for (GameObject* o : selection_.units()) {
+                if (o->type == ObjType::Vehicle && !o->driver) continue;  // nobody to drive it
                 if (!objects_.RouteToBlock(*o, m.block)) RR_DEBUG("No route for %s", o->info->name.c_str());
+            }
             break;
         default: break;
         }
@@ -1326,6 +1380,11 @@ public:
     }
 
     void Simulate(float elapsed) {
+        // RR_DEBUG_SKILLS=bits: every Rock Raider knows these skills (Ability bits, e.g. 7 =
+        // Pilot, Sailor and Driver), including ones teleported in later.
+        if (const char* sk = std::getenv("RR_DEBUG_SKILLS"))
+            for (const auto& o : objects_.objects())
+                if (o->type == ObjType::MiniFigure) o->abilities |= uint32_t(std::strtoul(sk, nullptr, 0));
         // RR_DEBUG_TRAIN="tick,ability": the first raider is sent to train at that tick.
         if (const char* tr = std::getenv("RR_DEBUG_TRAIN")) {
             const auto parts = SplitTokens(tr, ",");

@@ -81,6 +81,10 @@ public:
     Task* CreateDynamite(BlockPos wall, GameObject& dynamite);
     // AITask_DoTrain_Target: learn a skill at a building that trains it.
     Task* CreateTrain(GameObject& building, uint32_t ability, GameObject* forUnit);
+    // AITask_DoFindDriver_Target: a unit with the vehicle's driving skill goes and gets in.
+    // Null if the vehicle already waits for one.
+    Task* CreateFindDriver(GameObject& vehicle);
+    bool HasFindDriver(const GameObject& vehicle) const;
     // Removes the block's pending tasks of a type; returns the units that were on them.
     std::vector<GameObject*> CancelBlockTasks(BlockPos block, TaskType type);
     bool HasBlockTask(BlockPos block, TaskType type) const;

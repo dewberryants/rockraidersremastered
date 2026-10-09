@@ -17,7 +17,8 @@ Playable: Level 1 start to finish, and the early missions as far as their system
 - Effects: rock falls, explosions, scene sound cues, activity and put-down sounds.
 - Interface: icon menus that slide, HUD panels, radar, crystal side bar, objective window,
   block highlights, level scripts (NERPs) with their messages.
-- Testing aids: cheat mode (`[debug] cheats=1` or `--cheats`) and the `RR_DEBUG_*` hooks.
+- Testing aids: cheat mode (`[debug] cheats=1` or `--cheats`) and the `RR_DEBUG_*` hooks
+  (`RR_DEBUG_SKILLS=bits` gives every raider skills; `RR_DEBUG_SPAWN="Type,x,y;..."` places objects).
 
 ## How we work
 
@@ -28,15 +29,22 @@ report. Behaviour comes from the decompiled game; where we deliberately differ, 
 
 What is done: teleporting vehicles in, their models, the unmanned vehicle menu.
 
+Getting in and out is built and waiting for the user's play-test (see below).
+
 Next:
 
-1. **Getting in and out.** Get In on an unmanned vehicle sends a raider with the right skill:
-   Pilot or Driver for land, Sailor for water. Exit Vehicle drops the driver beside it. The driver
-   sits on the vehicle's `DriverNullName` and plays the matching drive activity
-   (`Activity_SMALLTRUCK`, `Activity_Hoverboard`, …), or is hidden for `InvisibleDriver`.
-   Object lists can start a raider inside a vehicle.
-   Read: `AITask_DoFindDriver_Target`, `LegoObject_TryFindDriver_FUN_00440690`,
-   `LegoObject_UpdateDriverStickyPosition`, `Vehicle_GetDriverNull`.
+1. **Getting in and out** (built, awaiting play-test). Get In (menu) creates a FindDriver task
+   (priority GetIn) any raider with the skill takes; clicking an unmanned vehicle with a trained
+   raider selected sends that raider. Skill: NeedsPilot or land+water → Pilot, land → Driver,
+   water → Sailor. The raider walks onto the vehicle's position and boards at once
+   (`ObjectList::Board`); it sits on `DriverNullName` (or the vehicle origin) and plays
+   `<vehicle activity><vehicle type>` (`Activity_` + type while routing), hidden for
+   `InvisibleDriver`. Get Out puts it at the deposit null if the ground takes it
+   (`ObjectList::GetOut`). Object list `driving` boards and trains the raider.
+   Test setup: `RR_DEBUG_SKILLS=7 RR_DEBUG_SPAWN="SmallTruck,7,9;Hoverboard,6,9;SmallDigger,7,10"`
+   on Level02. Still open: water vehicles (docks, GetInAtLand/GetOutAtLand), several selected
+   raiders answering a click, dropping a carried load first, TakeCarryingDrivers, the get-in
+   pointer.
 2. **Driving.** Selected vehicles go where you click, with their own route speed and terrain
    rules (`CrossLand`, `CrossWater`, `CrossLava`). They play Route, Reverse, StartUp and ShutDown.
    The engine sound loops while moving (`StatsObject_GetEngineSound`).

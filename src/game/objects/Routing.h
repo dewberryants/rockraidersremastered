@@ -60,7 +60,7 @@ struct RouteNode {
 // What a unit does when it reaches the last node of its route (route action ids of the game).
 namespace RouteAction {
 constexpr uint8_t None = 0, Drill = 1, Reinforce = 2, Collect = 3, Clear = 4, Throw = 5, Repair = 6, Deposit = 7,
-                  Drop = 8, Place = 9, Enter = 10, Eat = 11, Train = 14;
+                  Drop = 8, Place = 9, Enter = 10, Eat = 11, GetIn = 12, Train = 14;
 constexpr uint8_t Fetch = 100;      // ours: take a resource out of a storage building
 constexpr uint8_t BuildPath = 101;  // ours: turn a laid path into a power path
 constexpr uint8_t GetTool = 102;    // ours: pick up a tool at a tool store

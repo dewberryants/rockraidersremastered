@@ -216,6 +216,20 @@ Task* TaskSystem::CreateTrain(GameObject& building, uint32_t ability, GameObject
     return t;
 }
 
+Task* TaskSystem::CreateFindDriver(GameObject& vehicle) {
+    if (HasFindDriver(vehicle)) return nullptr;
+    Task* t = NewTask(tasks_, TaskType::FindDriver, PriorityType::GetIn, priorityValue_[size_t(PriorityType::GetIn)]);
+    t->target = &vehicle;
+    t->ability = ObjectList::DriverAbility(vehicle);
+    return t;
+}
+
+bool TaskSystem::HasFindDriver(const GameObject& vehicle) const {
+    for (const auto& t : tasks_)
+        if (t->type == TaskType::FindDriver && t->target == &vehicle && !t->remove) return true;
+    return false;
+}
+
 std::vector<GameObject*> TaskSystem::CancelBlockTasks(BlockPos block, TaskType type) {
     std::vector<GameObject*> units;
     for (auto& t : tasks_) {
@@ -328,6 +342,11 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
     case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
     case TaskType::GetTool: return t.tool != ToolType::Count && !unit.HasTool(t.tool);
     case TaskType::Train: return t.target && !t.target->removed && !(unit.abilities & t.ability);
+    case TaskType::FindDriver:
+        // LegoObject_TryFindDriver_FUN_00440690: a trained unit on foot, a free seat.
+        // TODO(vehicles): TakeCarryingDrivers vehicles take units that carry something.
+        return (unit.abilities & t.ability) && !unit.driving && t.target && !t.target->removed &&
+               !t.target->driver && !t.target->teleportingIn;
     case TaskType::Dynamite:
         return (unit.abilities & Ability::Dynamite) && t.target && !t.target->removed && !t.target->ticking &&
                (!t.target->carrier || t.target->carrier == &unit) && level.CanDynamite(t.block.x, t.block.y);
@@ -416,6 +435,21 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
         if (!routed) return false;
         break;
     }
+    case TaskType::FindDriver: {
+        // LegoObject_TryFindDriver_FUN_00440690: walk onto the vehicle's position and arrive
+        // facing the way it faces.
+        // TODO(vehicles): GetInAtLand boats are boarded from the land block beside them.
+        BlockPos tb;
+        if (!t.target || !objects.BlockOf(*t.target, tb)) return false;
+        const Vec2 at{t.target->position.x, t.target->position.y};
+        if (!RouteBlocks(level, unit, from, tb, route) || !objects.RouteBegin(unit, route, &at)) return false;
+        const Vec2 f = t.target->faceDir;
+        const uint8_t face = std::fabs(f.x) <= std::fabs(f.y) ? (f.y <= 0.0f ? 2 : 0) : (f.x <= 0.0f ? 3 : 1);
+        unit.route.back().action = RouteAction::GetIn;
+        unit.route.back().flags |= RouteFlag::Face | face;
+        unit.stateTarget = t.target;
+        break;
+    }
     case TaskType::Collect: {
         BlockPos tb;
         if (!t.target || !objects.BlockOf(*t.target, tb)) return false;
@@ -463,6 +497,7 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
     for (auto& t : tasks_) {
         if (t->retryTimer > 0.0f) t->retryTimer -= elapsed;
         if (t->target && t->target->removed) t->remove = true;
+        if (t->type == TaskType::FindDriver && t->target && t->target->driver && !t->assigned) t->remove = true;
         // A unit that stopped working on its task without finishing it (route abandoned, unit
         // selected, removed...) gives the task back.
         if (GameObject* u = t->assigned) {
@@ -477,7 +512,7 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
     std::vector<GameObject*> idle;
     for (const auto& op : objects.objects()) {
         GameObject& u = *op;
-        if (u.removed || u.hidden || u.type != ObjType::MiniFigure) continue;
+        if (u.removed || u.hidden || u.driving || u.type != ObjType::MiniFigure) continue;
         if (u.routing || u.state != UnitState::Idle || u.teleportingIn || TaskOf(u)) continue;
         if (u.flags3 & ObjFlag3::Selected) continue;  // TODO(ai): tasks given to selected units
         if (u.carried && u.deliverZone) {

@@ -94,6 +94,7 @@ struct GameObject {
     bool ticking = false;                  // dynamite: lit, explodes when TickDown ends
     // Vehicles.
     GameObject* driver = nullptr;          // the minifigure driving it (null: unmanned)
+    GameObject* driving = nullptr;         // minifigure: the vehicle it sits in (LegoObject driveObject)
     uint32_t upgradeLevel = 0;             // Upgrade level bits (engine, drill, scan, carry)
     float wheelSpin = 0.0f;                // wheel rotation (distance / wheel radius)
     Vec2 lastPos;
@@ -178,6 +179,16 @@ public:
     std::function<void(GameObject& unit, GameObject& item)> onPlace;
     // A unit finished laying the power path on a block.
     std::function<void(GameObject& unit, BlockPos block)> onBuildPath;
+    // A minifigure got into a vehicle (Interface_ChangeMenu_IfVehicleMounted_IsLiveObject).
+    std::function<void(GameObject& unit, GameObject& vehicle)> onBoard;
+    // The skill a vehicle's driver needs (AITask_DoFindDriver_Target): Pilot for NeedsPilot and
+    // for vehicles crossing land and water, Driver for land, Sailor for water.
+    static uint32_t DriverAbility(const GameObject& vehicle);
+    // The minifigure takes the driver's seat (the get-in arrival, flag 0x4 of LegoObject_Update).
+    void Board(GameObject& unit, GameObject& vehicle);
+    // LegoObject_FUN_00440470: the driver steps out at the vehicle's deposit null if the ground
+    // there takes them. Returns false if nobody could get out.
+    bool GetOut(GameObject& vehicle);
     // Notified when a carried object is delivered to a building (resources).
     std::function<void(GameObject& unit, GameObject& delivered, GameObject& building)> onDeposit;
     void Remove(GameObject& o);
@@ -221,6 +232,12 @@ private:
                           const Mat4& world) const;
     GameObject* PlaceListedObject(const ObjectTypeInfo& info, float x, float y, float headingDeg);
     void UpdateMovement(GameObject& o, float elapsed);
+    // LegoObject_UpdateActivityChange: the driver plays "<vehicle activity><vehicle type>".
+    void SetDriverAnim(const GameObject& vehicle);
+    // LegoObject_UpdateDriverStickyPosition: the driver sits on the vehicle's driver null.
+    void UpdateDriverPosition(const GameObject& vehicle);
+    // Object list "driving": the unit starts in the named vehicle with the skill it needs.
+    void BoardListed(GameObject& unit, const std::string& vehicleName);
     void UpdateAction(GameObject& o, float elapsed);
 
     void BuildRouteCurve(GameObject& o, bool skipCornerNode);

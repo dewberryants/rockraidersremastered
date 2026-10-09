@@ -253,13 +253,21 @@ void ObjectList::Update(float elapsed) {
         GameObject& o = *op;
         if (o.removed) continue;
         if (o.type == ObjType::MiniFigure) o.trainTimer += elapsed;
+        if (o.driving) {
+            // A seated driver only plays its drive animation: the AI and routing leave it alone
+            // (flag 0x8 of flags2) and the vehicle sets its activity and position.
+            o.MoveAnimation(elapsed, elapsed);
+            continue;
+        }
         if (o.type == ObjType::Vehicle) {
             const float dx = o.position.x - o.lastPos.x, dy = o.position.y - o.lastPos.y;
             const ActivityModel* am = o.info ? o.info->model.activities.get() : nullptr;
             if (am && am->wheelRadius > 0.0f) o.wheelSpin += std::sqrt(dx * dx + dy * dy) / am->wheelRadius;
             o.lastPos = {o.position.x, o.position.y};
         }
+        const ActivityType lastActivity = o.activity;
         o.UpdateActivityChange();
+        if (o.driver && o.activity != lastActivity) SetDriverAnim(o);
         const Activity* before = o.anim;
         const bool fresh = o.animFresh;
         const float t0 = fresh ? -0.001f : o.animTime;  // a new animation also passes frame 0
@@ -300,6 +308,8 @@ void ObjectList::Update(float elapsed) {
             o.SetActivity(ActivityType::CarryStand);
         }
     }
+    for (auto& op : objects_)
+        if (op->driver && !op->removed) UpdateDriverPosition(*op);
     // LegoObject_UpdateCarrying: carried objects sit on their carrier's carry null.
     for (auto& op : objects_) {
         GameObject& o = *op;
@@ -404,6 +414,14 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         o.state = UnitState::GettingTool;
         o.SetActivity(ActivityType::Collect);
         break;
+    case RouteAction::GetIn: {
+        // Arrived at the vehicle: in at once if the seat is still free.
+        GameObject* v = target;
+        const bool free = v && !v->removed && !v->driver && !o.driving;
+        FinishAction(o, free);
+        if (free) Board(o, *v);
+        break;
+    }
     case RouteAction::BuildPath:
         // LegoObject_TryBuildPath: the path is swept into place with the clearing animation.
         o.state = UnitState::BuildingPath;
@@ -443,6 +461,10 @@ void ObjectList::Remove(GameObject& o) {
     if (o.carrier) o.carrier->carried = nullptr;
     if (o.carried) o.carried->carrier = nullptr;
     o.carrier = o.carried = nullptr;
+    // LegoObject_UpdateRemoval: a vehicle and its driver let go of each other.
+    if (o.driver) o.driver->driving = nullptr;
+    if (o.driving) o.driving->driver = nullptr;
+    o.driver = o.driving = nullptr;
     for (auto& op : objects_) {
         if (op->stateTarget == &o) op->stateTarget = nullptr;
         if (op->teleportService == &o) op->teleportService = nullptr;
@@ -864,6 +886,90 @@ void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsS
     }
 }
 
+uint32_t ObjectList::DriverAbility(const GameObject& v) {
+    if (!v.stats) return Ability::Driver;
+    const uint32_t f1 = v.stats->F1(v.level);
+    if (v.stats->F3(v.level) & StatsFlag3::NeedsPilot) return Ability::Pilot;
+    if (!(f1 & StatsFlag1::CrossLand)) return Ability::Sailor;
+    return (f1 & StatsFlag1::CrossWater) ? Ability::Pilot : Ability::Driver;
+}
+
+void ObjectList::Board(GameObject& unit, GameObject& v) {
+    RR_DEBUG("%s gets into %s", unit.info->name.c_str(), v.info->name.c_str());
+    RouteEnd(unit, false);
+    unit.driving = &v;
+    v.driver = &unit;
+    // LegoObject_Callback_HideCertainObjects: drivers of InvisibleDriver vehicles are hidden.
+    if (v.stats && (v.stats->F2(v.level) & StatsFlag2::InvisibleDriver)) unit.hidden = true;
+    SetDriverAnim(v);
+    UpdateDriverPosition(v);
+    if (onBoard) onBoard(unit, v);
+}
+
+bool ObjectList::GetOut(GameObject& v) {
+    GameObject* d = v.driver;
+    if (!d || !level_ || !v.stats || !(v.stats->F1(v.level) & StatsFlag1::CanBeDriven)) return false;
+    Vec3f p = v.position;
+    Vec2 dir = v.faceDir;
+    const ActivityModel* am = v.info ? v.info->model.activities.get() : nullptr;
+    if (am) NullPoint(v, am->depositNull, p, dir);
+    BlockPos b;
+    if (!level_->map().WorldToBlock(p.x, p.y, b.x, b.y)) return false;
+    // TODO(water): boats put their driver ashore on a land block beside them
+    // (LegoObject_UnkGetTerrainGetOutAtLandBlock_FUN_0043a0d0) or head for a dock (AITask_DoDock).
+    if (!(v.stats->F1(v.level) & StatsFlag1::CrossLand) ||
+        GetCrossTerrainType(*level_, d, b.x, b.y, b.x, b.y, true) == CrossType::Blocked)
+        return false;
+    RR_DEBUG("%s gets out of %s", d->info->name.c_str(), v.info->name.c_str());
+    v.driver = nullptr;
+    d->driving = nullptr;
+    d->hidden = false;
+    SetPositionAndHeading(*d, p.x, p.y, d->heading);
+    d->Face(dir);
+    d->activity = ActivityType::Count;  // the drive animation gives way to Activity_Stand
+    d->SetActivity(ActivityType::Stand);
+    d->UpdateActivityChange();
+    return true;
+}
+
+void ObjectList::SetDriverAnim(const GameObject& v) {
+    if (!v.driver || !v.info) return;
+    // Activity_Route plays "Activity_<type>"; the rest "<activity><type>" (Activity_StandSmallTruck).
+    // The driver keeps its animation if it has none for the vehicle's activity.
+    const ActivityType a = v.activity == ActivityType::Count ? ActivityType::Stand : v.activity;
+    const std::string name = (a == ActivityType::Route ? std::string("Activity_") : std::string(ActivityName(a))) + v.info->name;
+    if (!v.driver->PlayNamedAnim(name)) RR_DEBUG("Driver has no %s", name.c_str());
+}
+
+void ObjectList::UpdateDriverPosition(const GameObject& v) {
+    GameObject& d = *v.driver;
+    // Vehicle_GetDriverNull, or the vehicle itself for models without one (the hoverboard).
+    const ActivityModel* am = v.info ? v.info->model.activities.get() : nullptr;
+    Vec3f p;
+    Vec2 dir;
+    if (am && NullPoint(v, am->driverNull, p, dir)) {
+        d.position = p;
+        d.Face(dir);
+    } else {
+        d.position = v.position;
+        d.heading = v.heading;
+        d.faceDir = v.faceDir;
+    }
+}
+
+void ObjectList::BoardListed(GameObject& unit, const std::string& vehicleName) {
+    if (vehicleName.empty() || unit.type != ObjType::MiniFigure) return;
+    for (auto& op : objects_) {
+        GameObject& v = *op;
+        if (v.removed || v.type != ObjType::Vehicle || v.driver || !EqualsNoCase(v.customName, vehicleName)) continue;
+        // Lego_LoadOLObjectList: the driver is trained for the vehicle (LegoObject_TrainMiniFigure).
+        unit.abilities |= DriverAbility(v);
+        Board(unit, v);
+        return;
+    }
+    RR_WARN("Object list: %s drives unknown vehicle %s", unit.customName.c_str(), vehicleName.c_str());
+}
+
 void ObjectList::Clear() {
     objects_.clear();
     hidden_.clear();
@@ -909,6 +1015,7 @@ void ObjectList::PlaceBuilding(GameObject& o, BlockPos origin, int dir) {
 
 std::vector<GameObject*> ObjectList::ExposeBlock(int bx, int by) {
     std::vector<GameObject*> created;
+    std::vector<std::pair<GameObject*, std::string>> drivers;
     for (size_t i = 0; i < hidden_.size();) {
         const HiddenObject& h = hidden_[i];
         BlockPos b;
@@ -916,12 +1023,15 @@ std::vector<GameObject*> ObjectList::ExposeBlock(int bx, int by) {
             GameObject* o = PlaceListedObject(*h.info, h.position.x, h.position.y, h.heading);
             o->health = h.health;
             o->customName = h.name;
+            if (!h.driving.empty()) drivers.emplace_back(o, h.driving);
             created.push_back(o);
             hidden_.erase(hidden_.begin() + std::ptrdiff_t(i));
         } else {
             ++i;
         }
     }
+    // HiddenObject_ExposeBlock: drivers board once everything on the block is out.
+    for (auto& [unit, vehicle] : drivers) BoardListed(*unit, vehicle);
     return created;
 }
 
@@ -931,6 +1041,7 @@ bool ObjectList::LoadObjectList(const std::string& file, world::Level& level, Ca
     if (!ol.Load(file)) return false;
     const world::Map3D& map = level.map();
     const float bs = map.blockSize();
+    std::vector<std::pair<GameObject*, std::string>> drivers;
     for (Config::ItemRef it = ol.FindArray("Lego*"); it != Config::kNone; it = ol.Next(it)) {
         const std::string key = ol.item(it).key;
         const std::string base = Config::Id("Lego*", key);
@@ -974,8 +1085,11 @@ bool ObjectList::LoadObjectList(const std::string& file, world::Level& level, Ca
         GameObject* o = PlaceListedObject(*info, x, y, headingDeg);
         o->health = health;
         o->customName = key;
-        // TODO(ai): crystals/ore/dynamite/barriers get a collect task; drivers board "driving".
+        // TODO(ai): crystals/ore/dynamite/barriers get a collect task.
+        if (!driving.empty()) drivers.emplace_back(o, driving);
     }
+    // Drivers get in once every listed object exists.
+    for (auto& [unit, vehicle] : drivers) BoardListed(*unit, vehicle);
     RR_INFO("Object list %s: %zu objects, %zu hidden", file.c_str(), objects_.size(), hidden_.size());
     return true;
 }
