@@ -103,8 +103,9 @@ Station, two Mining Lasers, Geological Center; 10 crystals and 30 ore in storage
    (`UpgradeTime` in the stats is for vehicles). The level goes up (stats column), the
    `UpgradeEffect` sparks play (misc effect 9, at most ten at once) and the power grid is
    recomputed. The disabled tooltip reads "Ore needed to upgrade: n" (the original draws n ore
-   icons after the text). Tooltips stay on screen as in `ToolTip_Draw` (moved left at the right
-   edge, above the pointer at the bottom). Building upgrade parts are drawn for the building's level
+   icons after the text). Tooltips are placed as in `ToolTip_Draw`: 32 below the pointer (above it
+   at the bottom), menu icon tooltips right-aligned to end 32 right of the pointer, all kept
+   inside the right edge. Building upgrade parts are drawn for the building's level
    (`Upgrade_SetUpgradeLevel` takes the parts whose level equals the object level, so level 1 is
    `Level0001`); only the Mining Laser has them (Turret, DTurret at level 1). The third value of
    a part is a weapon name, not a parent: the Mining Laser turret and the Large Digger's laser

@@ -1708,16 +1708,23 @@ public:
         // TODO(interface): proper tooltip boxes (ToolTip_*); plain text for now.
         std::string tip = game.panels->hoverToolTip();
         if (tip.empty() && game.panels->IsFullyOpen(PanelType::PriorityList)) tip = game.priorities->hoverToolTip();
-        if (tip.empty()) tip = game.iconPanel->hoverToolTip();
+        bool rightAlign = false;
+        if (tip.empty()) {
+            tip = game.iconPanel->hoverToolTip();
+            rightAlign = true;  // Interface_Initialise: ToolTip_SetRightAlign(icon tooltips)
+        }
         if (const Font* f = game.toolTipFont.get(); f && !tip.empty()) {
-            // ToolTip_Draw: kept on screen, moved left at the right edge and above the pointer
-            // at the bottom.
+            // ToolTip_Draw: the box (text plus a 3 pixel border) sits 32 below the pointer, or
+            // above it at the bottom of the screen. It starts at the pointer, or ends 32 right of
+            // it when right-aligned, and is kept inside the right edge.
+            constexpr float kBorder = 3.0f, kOffsetY = 32.0f;
             const float mx = GetApp().input().mouseX(), my = GetApp().input().mouseY();
-            const float right = 640.0f + r2d.AnchorOffset(Anchor::Center), w = float(f->StringWidth(tip));
-            const float h = float(f->height());
-            const float x = std::min(mx + 16.0f, right - w);
-            const float y = my + 16.0f + h > r2d.uiHeight() ? my - h - 1.0f : my + 16.0f;
-            f->Draw(r2d, x, y, tip);
+            const float right = 640.0f + r2d.AnchorOffset(Anchor::Center);
+            const float w = float(f->StringWidth(tip)) + 2 * kBorder, h = float(f->height()) + 2 * kBorder;
+            float x = rightAlign ? mx + 32.0f - w : mx;
+            if (x + w > right) x = right - w;
+            const float y = my + kOffsetY + h > r2d.uiHeight() ? my - h - 1.0f : my + kOffsetY;
+            f->Draw(r2d, x + kBorder, y + kBorder, tip);
         }
         GetPointers().Draw(r2d, GetApp().input().mouseX(), GetApp().input().mouseY());
     }
