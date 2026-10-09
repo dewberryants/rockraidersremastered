@@ -1709,8 +1709,16 @@ public:
         std::string tip = game.panels->hoverToolTip();
         if (tip.empty() && game.panels->IsFullyOpen(PanelType::PriorityList)) tip = game.priorities->hoverToolTip();
         if (tip.empty()) tip = game.iconPanel->hoverToolTip();
-        if (const Font* f = game.toolTipFont.get(); f && !tip.empty())
-            f->Draw(r2d, GetApp().input().mouseX() + 16, GetApp().input().mouseY() + 16, tip);
+        if (const Font* f = game.toolTipFont.get(); f && !tip.empty()) {
+            // ToolTip_Draw: kept on screen, moved left at the right edge and above the pointer
+            // at the bottom.
+            const float mx = GetApp().input().mouseX(), my = GetApp().input().mouseY();
+            const float right = 640.0f + r2d.AnchorOffset(Anchor::Center), w = float(f->StringWidth(tip));
+            const float h = float(f->height());
+            const float x = std::min(mx + 16.0f, right - w);
+            const float y = my + 16.0f + h > r2d.uiHeight() ? my - h - 1.0f : my + 16.0f;
+            f->Draw(r2d, x, y, tip);
+        }
         GetPointers().Draw(r2d, GetApp().input().mouseX(), GetApp().input().mouseY());
     }
 

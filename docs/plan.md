@@ -21,9 +21,8 @@ Playable: Level 1 start to finish, and the early missions as far as their system
   (`RR_DEBUG_SKILLS=bits` gives every raider skills; `RR_DEBUG_SPAWN="Type,x,y;..."` places
   objects, and queues collect jobs for ore and crystals).
 
-**Next: milestone 2, building functions.** Step 1 (building upgrades) is built and waits for the
-user's play-test; then the Upgrade Station (step 2), since vehicle upgrades (milestone 1, step 5)
-wait on it.
+**Next: milestone 2, building functions.** Step 1 (building upgrades) is play-tested; next is
+the Upgrade Station (step 2), since vehicle upgrades (milestone 1, step 5) wait on it.
 
 ## How we work
 
@@ -97,14 +96,15 @@ vehicles carrying barriers, the get-in mouse pointer, reversing and turning (mil
 Test: `scripts\test-buildings.bat` (Level18: Tool Store, Power Station, Teleport Pad, Support
 Station, two Mining Lasers, Geological Center; 10 crystals and 30 ore in storage).
 
-1. **Upgrading buildings** (built, waiting for the play-test). The Upgrade item of a building's
+1. **Upgrading buildings** (play-tested). The Upgrade item of a building's
    menu (`LegoObject_GetBuildingUpgradeCost`, `LegoObject_UpgradeBuilding`): enabled while the
    building has another level and storage holds `Main::BuildingUpgradeCostOre` ore (5), or else
    `BuildingUpgradeCostStuds` studs (1). The upgrade is immediate: no raider and no upgrade time
    (`UpgradeTime` in the stats is for vehicles). The level goes up (stats column), the
    `UpgradeEffect` sparks play (misc effect 9, at most ten at once) and the power grid is
    recomputed. The disabled tooltip reads "Ore needed to upgrade: n" (the original draws n ore
-   icons after the text). Building upgrade parts are drawn for the building's level
+   icons after the text). Tooltips stay on screen as in `ToolTip_Draw` (moved left at the right
+   edge, above the pointer at the bottom). Building upgrade parts are drawn for the building's level
    (`Upgrade_SetUpgradeLevel` takes the parts whose level equals the object level, so level 1 is
    `Level0001`); only the Mining Laser has them (Turret, DTurret at level 1). The third value of
    a part is a weapon name, not a parent: the Mining Laser turret and the Large Digger's laser
