@@ -1028,6 +1028,33 @@ void ObjectList::UpdateEngineSound(GameObject& o) {
     GetSoundBank().SetPlayPosition(o.engineSound, at);
 }
 
+void ObjectList::DropCarried(GameObject& o) {
+    std::vector<GameObject*> items = std::move(o.cargo);
+    o.cargo.clear();
+    if (o.carried) items.insert(items.begin(), o.carried);
+    if (items.empty()) return;
+    // Work that needed the load stops: deliveries on the way or under way.
+    if (o.routing && (o.route.back().action == RouteAction::Deposit || o.route.back().action == RouteAction::Place ||
+                      o.route.back().action == RouteAction::PlaceDynamite))
+        RouteEnd(o, false);
+    if (o.state == UnitState::Depositing || o.state == UnitState::Placing || o.state == UnitState::PlacingDynamite)
+        FinishAction(o, false);
+    o.carried = nullptr;
+    for (GameObject* item : items) {
+        item->carrier = nullptr;
+        BlockPos b;
+        const bool open = level_ && BlockOf(*item, b) && (level_->block(b.x, b.y).flags & world::BlockFlag::Ground) &&
+                          level_->block(b.x, b.y).terrain != world::Terrain::Lava &&
+                          !(level_->block(b.x, b.y).flags & world::BlockFlag::Building);
+        const Vec2 at = open ? Vec2{item->position.x, item->position.y} : Vec2{o.position.x, o.position.y};
+        SetPositionAndHeading(*item, at.x, at.y, item->heading);
+        if (onDrop) onDrop(o, *item);
+    }
+    o.deliverZone = 0;
+    o.fetchType = ObjType::None;
+    if (o.activity == ActivityType::CarryStand) o.SetActivity(ActivityType::Stand);
+}
+
 uint32_t ObjectList::DriverAbility(const GameObject& v) {
     if (!v.stats) return Ability::Driver;
     const uint32_t f1 = v.stats->F1(v.level);

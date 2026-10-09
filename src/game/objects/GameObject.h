@@ -185,6 +185,11 @@ public:
     std::function<void(GameObject& unit, GameObject& item)> onPlace;
     // A unit finished laying the power path on a block.
     std::function<void(GameObject& unit, BlockPos block)> onBuildPath;
+    // LegoObject_DropCarriedObject: the unit puts down everything it carries where it stands
+    // (on its own position if that is not open ground). onDrop is told about each object so it
+    // can be collected (or requested for its construction site) again.
+    void DropCarried(GameObject& unit);
+    std::function<void(GameObject& unit, GameObject& item)> onDrop;
     // A minifigure got into a vehicle (Interface_ChangeMenu_IfVehicleMounted_IsLiveObject).
     std::function<void(GameObject& unit, GameObject& vehicle)> onBoard;
     // The skill a vehicle's driver needs (AITask_DoFindDriver_Target): Pilot for NeedsPilot and

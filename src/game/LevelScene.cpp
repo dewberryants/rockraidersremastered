@@ -67,6 +67,7 @@ public:
         objects_.onBuildPath = [this](GameObject&, BlockPos b) { FinishPath(b); };
         objects_.onExplode = [this](GameObject& d) { ExplodeDynamite(d); };
         objects_.onBoard = [this](GameObject& u, GameObject& v) { OnBoard(u, v); };
+        objects_.onDrop = [this](GameObject& u, GameObject& item) { OnDrop(u, item); };
         tasks_.hasStock = [this](ObjType t) { return t == ObjType::PowerCrystal ? crystals_ > 0 : ore_ > 0; };
         tasks_.zoneBlock = [this](int zone, BlockPos& b) {
             for (const auto& z : zones_)
@@ -310,9 +311,13 @@ public:
             if (o->type == ObjType::Vehicle && !o->driver && primary && primary->type == ObjType::MiniFigure &&
                 (primary->abilities & ObjectList::DriverAbility(*o))) {
                 GameObject& unit = *selection_.Primary();
-                // TODO(vehicles): every selected unit may answer (AITask_UnkInitRouting_FUN_00402530),
-                // and carried loads are dropped first.
-                if (Task* t = tasks_.CreateFindDriver(*o); t && !unit.carried) tasks_.AssignTo(*t, unit, objects_, level_);
+                // TODO(vehicles): every selected unit may answer (AITask_UnkInitRouting_FUN_00402530).
+                // The load is put down first, unless the vehicle takes carrying drivers.
+                if (Task* t = tasks_.CreateFindDriver(*o)) {
+                    if (!(o->stats && (o->stats->F3(o->level) & StatsFlag3::TakeCarryingDrivers)))
+                        objects_.DropCarried(unit);
+                    if (!unit.carried) tasks_.AssignTo(*t, unit, objects_, level_);
+                }
                 panel.BackToMain();
                 return;
             }
@@ -488,6 +493,12 @@ public:
                 return false;
             return blk.terrain != Terrain::Lava && blk.terrain != Terrain::Lake;
         }
+        case MenuItem::UnLoadMinifigure:
+        case MenuItem::UnLoadVehicle: {
+            // "Unit is not carrying" otherwise.
+            const GameObject* u = selection_.Primary();
+            return u && (u->carried || !u->cargo.empty());
+        }
         case MenuItem::GetIn: {
             // Interface_HandleMenuItem (GetIn): nobody on the way yet, and a unit trained for it.
             // TODO(vehicles): boats only from a dock, or from land beside them (GetInAtLand).
@@ -541,7 +552,10 @@ public:
                 if (GameObject* d = info ? objects_.Spawn(*info, at.x, at.y) : nullptr) {
                     Task* dt = tasks_.CreateDynamite(b, *d);
                     GameObject* u = selection_.Primary();
-                    if (u && (u->abilities & Ability::Dynamite)) tasks_.AssignTo(*dt, *u, objects_, level_);
+                    if (u && (u->abilities & Ability::Dynamite)) {
+                        objects_.DropCarried(*u);
+                        tasks_.AssignTo(*dt, *u, objects_, level_);
+                    }
                 }
             }
             break;
@@ -565,6 +579,7 @@ public:
         case MenuItem::GetSpanner:
             if (GameObject* u = selection_.Primary()) {
                 Task* gt = tasks_.CreateGetTool(ToolOfItem(item), u);
+                objects_.DropCarried(*u);
                 tasks_.AssignTo(*gt, *u, objects_, level_);
             }
             break;
@@ -577,6 +592,11 @@ public:
             if (const ObjectTypeInfo* pilot = GetObjectRegistry().Get(ObjType::MiniFigure, 0))
                 if (teleportQueue_.size() < kMaxTeleportQueue) teleportQueue_.push_back(pilot);
             break;
+        case MenuItem::UnLoadMinifigure:
+        case MenuItem::UnLoadVehicle:
+            // Interface_ObjectCallback_FUN_0041f5f0: every selected unit puts its load down.
+            for (GameObject* u : selection_.units()) objects_.DropCarried(*u);
+            return;
         case MenuItem::GetIn:
             // Interface_DoAction: the selection is dropped and any trained unit answers the call.
             if (GameObject* v = selection_.Primary()) tasks_.CreateFindDriver(*v);
@@ -598,8 +618,12 @@ public:
         // With units selected the order goes to the primary unit straight away.
         // A selected vehicle only takes orders it can carry out (a truck cannot drill).
         GameObject* p = selection_.Primary();
-        if (t && p && (p->type != ObjType::Vehicle || tasks_.CanDoIgnoringTools(*t, *p, level_)))
+        if (t && p && (p->type != ObjType::Vehicle || tasks_.CanDoIgnoringTools(*t, *p, level_))) {
+            // AITask_UnkInitRouting_FUN_00402530: digging, reinforcing and training orders make the
+            // unit put its load down first (clearing does not).
+            if (t->type != TaskType::Clear) objects_.DropCarried(*p);
             tasks_.AssignTo(*t, *p, objects_, level_);
+        }
         panel.BackToMain();
     }
 
@@ -1168,6 +1192,14 @@ public:
         case MenuItem::GetSpanner: return ToolType::Spanner;
         default: return ToolType::Count;
         }
+    }
+
+    // LegoObject_DropCarriedObject: ore and crystals are collected again; one fetched for a
+    // construction site is requested again.
+    void OnDrop(GameObject& unit, GameObject& item) {
+        if (item.type != ObjType::Ore && item.type != ObjType::PowerCrystal) return;
+        if (unit.deliverZone) tasks_.CreateRequest(unit.deliverZone, item.type);
+        tasks_.CreateCollect(item);
     }
 
     // A unit got into a vehicle. It leaves the selection (ours: the game keeps no selected unit

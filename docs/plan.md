@@ -76,8 +76,14 @@ Next:
      (Bulldozer MaxCarry is 0 until the carry upgrade). Vehicles keep their load in
      `GameObject::cargo`; raiders still use `carried`. Test: `scripts	est-vehicles.bat` (spawns
      ore and crystals with collect jobs).
-     Open: the cats carrying on water, other objects (barriers, dynamite), vehicles carrying
-     raiders (`TakeCarryingDrivers`), unloading on the ground (UnLoadVehicle menu item).
+     Play-tested: vehicles fine. Follow-up (built, awaiting play-test): units drop their load
+     (`ObjectList::DropCarried`, `LegoObject_DropCarriedObject`) through the UnLoadMinifigure /
+     UnLoadVehicle menu items and before direct dig, reinforce, dynamite, train, get-tool and
+     get-in orders (`AITask_UnkInitRouting_FUN_00402530` with dropCarried; clearing keeps the
+     load). Dropped ore and crystals are collected again, and requested again if they were on
+     the way to a construction site.
+     Open: the cats carrying on water, other objects (barriers), drivers carried in
+     (`TakeCarryingDrivers`).
 4. **Ground following.** Wheels sit on the terrain and the body tilts to match
    (`Vehicle_SetPosition`). Without it the Bulldozer sinks into sloped floor when its clearing
    animation backs it up (reported in play-testing).
