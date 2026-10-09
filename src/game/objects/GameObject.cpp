@@ -267,6 +267,8 @@ void ObjectList::Update(float elapsed) {
             continue;
         }
         if (o.type == ObjType::Vehicle) {
+            // LegoObject_Route_UpdateMovement resets a vehicle's timer while it moves.
+            o.stillTime = o.routing ? 0.0f : o.stillTime + elapsed;
             const float dx = o.position.x - o.lastPos.x, dy = o.position.y - o.lastPos.y;
             const ActivityModel* am = o.info ? o.info->model.activities.get() : nullptr;
             if (am && am->wheelRadius > 0.0f) o.wheelSpin += std::sqrt(dx * dx + dy * dy) / am->wheelRadius;
@@ -325,7 +327,10 @@ void ObjectList::Update(float elapsed) {
         const GameObject& c = *o.carrier;
         Vec2 dir;
         const ObjectModel* cm = c.info ? &c.info->model : nullptr;
-        if (cm && cm->activities && NullPoint(c, cm->activities->carryNull, o.position, dir)) {
+        // Vehicles hold each object on carry null CarryStart + slot.
+        const bool vehicle = c.type == ObjType::Vehicle;
+        const int instance = vehicle ? int(c.stats ? c.stats->Num("CarryStart", c.level) : 0.0f) + o.carrySlot : 0;
+        if (cm && cm->activities && NullPoint(c, cm->activities->carryNull, o.position, dir, instance, vehicle)) {
             o.heading = std::atan2(dir.x, dir.y);
         } else {
             o.position = {c.position.x + c.faceDir.x * 4.0f, c.position.y + c.faceDir.y * 4.0f, c.position.z - 8.0f};
@@ -369,6 +374,23 @@ bool ObjectList::NullPoint(const GameObject& c, const std::string& nullName, Vec
             if (inScene(a.get(), 0.0f, am->scale)) return true;
     }
     return false;
+}
+
+bool ObjectList::CanCollect(const GameObject& v) {
+    if (v.type != ObjType::Vehicle || !v.stats || !(v.stats->F1(v.level) & StatsFlag1::CrossLand)) return false;
+    const ActivityModel* am = v.info ? v.info->model.activities.get() : nullptr;
+    return am && !am->carryNull.empty();
+}
+
+int ObjectList::CargoCapacity(const GameObject& v) {
+    const ActivityModel* am = v.info ? v.info->model.activities.get() : nullptr;
+    const int maxCarry = v.stats ? int(v.stats->Num("MaxCarry", v.level)) : 0;
+    return std::min(maxCarry, am ? am->carryNullFrames : 0);
+}
+
+bool ObjectList::LoadReady(const GameObject& v) {
+    if (v.cargo.empty()) return false;
+    return int(v.cargo.size()) >= CargoCapacity(v) || v.stillTime >= 75.0f;
 }
 
 bool ObjectList::CanDig(const GameObject& o) {
@@ -424,10 +446,35 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
         o.SetActivity(ActivityType::Clear, o.type == ObjType::MiniFigure ? 2 : 0);
         break;
     case RouteAction::Collect:
+        if (o.type == ObjType::Vehicle) {
+            // Vehicles have no pick-up animation: the object goes onto the next carry slot.
+            GameObject* t = target;
+            const bool ok = t && !t->removed && !t->carrier && int(o.cargo.size()) < CargoCapacity(o);
+            if (ok) {
+                t->carrier = &o;
+                t->carrySlot = int(o.cargo.size());
+                o.cargo.push_back(t);
+            }
+            FinishAction(o, ok);
+            break;
+        }
         o.state = UnitState::Collecting;
         o.SetActivity(ActivityType::Collect);
         break;
     case RouteAction::Deposit:
+        if (o.type == ObjType::Vehicle) {
+            // LegoObject_ProccessCarriedObjects: the whole load is handed over at once.
+            GameObject* building = target;
+            const std::vector<GameObject*> load = std::move(o.cargo);
+            o.cargo.clear();
+            for (GameObject* item : load) {
+                item->carrier = nullptr;
+                if (building && onDeposit) onDeposit(o, *item, *building);
+                Remove(*item);
+            }
+            FinishAction(o, building != nullptr);
+            break;
+        }
         // Buildings that store objects (StoreObjects) are walked into and the load put down
         // (route action 9, Activity_Place); others have it thrown in (action 7, Activity_Deposit).
         o.state = UnitState::Depositing;
@@ -496,8 +543,20 @@ void ObjectList::FinishAction(GameObject& o, bool success) {
 
 void ObjectList::Remove(GameObject& o) {
     o.removed = true;
-    if (o.carrier) o.carrier->carried = nullptr;
+    if (o.carrier) {
+        GameObject& c = *o.carrier;
+        if (c.carried == &o) c.carried = nullptr;
+        // A vehicle's remaining load closes up its slots.
+        c.cargo.erase(std::remove(c.cargo.begin(), c.cargo.end(), &o), c.cargo.end());
+        for (size_t i = 0; i < c.cargo.size(); ++i) c.cargo[i]->carrySlot = int(i);
+    }
     if (o.carried) o.carried->carrier = nullptr;
+    for (GameObject* item : o.cargo) {
+        // A removed vehicle leaves its load on the ground.
+        item->carrier = nullptr;
+        SetPositionAndHeading(*item, item->position.x, item->position.y, item->heading);
+    }
+    o.cargo.clear();
     o.carrier = o.carried = nullptr;
     // LegoObject_UpdateRemoval: a vehicle and its driver let go of each other.
     if (o.driver) o.driver->driving = nullptr;

@@ -117,7 +117,9 @@ public:
                 const ObjectTypeInfo* info = GetObjectRegistry().Find(f[0]);
                 const Vec2 c = level_.map().BlockCentre(std::atoi(std::string(f[1]).c_str()),
                                                         std::atoi(std::string(f[2]).c_str()));
-                if (info) objects_.Spawn(*info, c.x, c.y);
+                GameObject* o = info ? objects_.Spawn(*info, c.x, c.y) : nullptr;
+                // Spawned resources are collected like generated ones.
+                if (o && (o->type == ObjType::Ore || o->type == ObjType::PowerCrystal)) tasks_.CreateCollect(*o);
             }
         }
         // RR_DEBUG_LAYPATH="x,y;..." lays power paths to be built.

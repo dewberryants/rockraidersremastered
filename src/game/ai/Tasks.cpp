@@ -322,9 +322,11 @@ bool TaskSystem::CanDo(const Task& t, const GameObject& unit, const world::Level
 }
 
 bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const world::Level& level) const {
-    // Vehicles dig (with a drill null) and clear rubble (CanClearRubble).
-    // TODO(vehicles): carriers collect and deposit (MaxCarry).
-    if (unit.type == ObjType::Vehicle && t.type != TaskType::Dig && t.type != TaskType::Clear) return false;
+    // Vehicles dig (with a drill null), clear rubble (CanClearRubble) and collect (carriers).
+    if (unit.type == ObjType::Vehicle) {
+        if (t.type == TaskType::Collect) return VehicleCanCollect(t, unit, objects_);
+        if (t.type != TaskType::Dig && t.type != TaskType::Clear) return false;
+    }
     if (t.type == TaskType::Dig && !ObjectList::CanDig(unit)) return false;
     switch (t.type) {
     case TaskType::Dig: {
@@ -360,6 +362,40 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
                (!t.target->carrier || t.target->carrier == &unit) && level.CanDynamite(t.block.x, t.block.y);
     default: return false;
     }
+}
+
+bool TaskSystem::VehicleCanCollect(const Task& t, const GameObject& v, const ObjectList* objects) const {
+    // AITask_FUN_00404ef0 (collect): a carrier with room, the same kind of object as its load,
+    // plain ore or a charged crystal, and a building that takes it (LegoObject_FUN_00439e40).
+    // TODO(vehicles): the cats carry on water; vehicles pick up other objects (barriers...).
+    const GameObject* item = t.target;
+    if (!item || item->removed || item->carrier || item->hidden || !ObjectList::CanCollect(v)) return false;
+    if (ObjectList::LoadReady(v) || int(v.cargo.size()) >= ObjectList::CargoCapacity(v)) return false;
+    if (item->type != ObjType::Ore && item->type != ObjType::PowerCrystal) return false;
+    if (item->id != 0 || (item->type == ObjType::PowerCrystal && item->crystalDrained)) return false;
+    if (!v.cargo.empty() && v.cargo.front()->type != item->type) return false;
+    return objects && DepositBuilding(*objects, v, item->type);
+}
+
+GameObject* TaskSystem::DepositBuilding(const ObjectList& objects, const GameObject& u, ObjType load) const {
+    // Vehicles that may not drive into tool stores take resources to a building that processes
+    // them (LegoObject_FindResourceProcessingBuilding).
+    const bool processorOnly =
+        u.type == ObjType::Vehicle && !(u.stats && (u.stats->F3(u.level) & StatsFlag3::EnterToolStore));
+    if (!processorOnly) return NearestStore(objects, u);
+    const uint32_t need = load == ObjType::Ore ? StatsFlag1::ProcessOre : StatsFlag1::ProcessCrystal;
+    GameObject* best = nullptr;
+    float bestD = 0.0f;
+    for (const auto& bp : objects.objects()) {
+        const GameObject& b = *bp;
+        if (b.type != ObjType::Building || b.removed || b.hidden || !b.stats || !(b.stats->F1(b.level) & need)) continue;
+        const float dx = b.position.x - u.position.x, dy = b.position.y - u.position.y;
+        if (!best || dx * dx + dy * dy < bestD) {
+            best = bp.get();
+            bestD = dx * dx + dy * dy;
+        }
+    }
+    return best;
 }
 
 bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Level& level) {
@@ -502,6 +538,7 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
 }
 
 void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed) {
+    objects_ = &objects;
     for (auto& t : tasks_) {
         if (t->retryTimer > 0.0f) t->retryTimer -= elapsed;
         if (t->target && t->target->removed) t->remove = true;
@@ -536,12 +573,14 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
             }
             continue;
         }
-        if (u.carried) {
+        // A vehicle's load goes to storage once it is full or the vehicle has stood still.
+        GameObject* load = u.carried ? u.carried : (ObjectList::LoadReady(u) ? u.cargo.front() : nullptr);
+        if (load) {
             // Deliver what it carries to the nearest store (AITask_DoDeposit,
             // LegoObject_TryDepositCarried). Buildings that store objects are walked into, to their
             // tool null (always instance 4); others are approached at their deposit null, facing
             // into the building.
-            GameObject* best = NearestStore(objects, u);
+            GameObject* best = DepositBuilding(objects, u, load->type);
             BlockPos from, to;
             std::vector<BlockPos> route;
             Vec3f np;
@@ -565,7 +604,7 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
                     u.route.back().flags |= RouteFlag::Face | dir;
                 }
                 u.stateTarget = best;
-                RR_DEBUG("%s takes %s to %s", u.info->name.c_str(), u.carried->info->name.c_str(), best->info->name.c_str());
+                RR_DEBUG("%s takes %s to %s", u.info->name.c_str(), load->info->name.c_str(), best->info->name.c_str());
             }
             // TODO(ai): verify what units do with a load when there is nowhere to deliver it.
             continue;

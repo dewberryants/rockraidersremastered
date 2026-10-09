@@ -25,6 +25,7 @@ struct ActivityModel {
     std::string folder;        // e.g. "Mini-Figures\Pilot"
     float scale = 1.0f;
     std::string cameraNull, drillNull, carryNull, depositNull, toolNull;
+    int carryNullFrames = 0;   // how many carry nulls of that name the model has (CarryNullFrames)
     // Vehicles (Vehicle_Load): a wheel mesh on each wheel null (up to six), the driver's seat,
     // and upgrade parts per upgrade level (Upgrade_Load: "Upgrades::LevelABCD", one bit each for
     // engine, drill, scan and carry).

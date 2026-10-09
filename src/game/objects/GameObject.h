@@ -83,6 +83,9 @@ struct GameObject {
     bool singleWidthDig = false;
     GameObject* carried = nullptr;  // object this unit carries
     GameObject* carrier = nullptr;  // unit carrying this object
+    std::vector<GameObject*> cargo; // vehicle: the objects it carries, in slot order (carriedObjects)
+    int carrySlot = 0;              // carried object: its slot on the carrier
+    float stillTime = 0.0f;         // vehicle: time since it last moved (elapsed time 0xf5)
     int deliverZone = 0;                   // construction site the carried resource is for
     ObjType fetchType = ObjType::None;     // resource to take from storage for deliverZone
     bool teleportingIn = false;            // playing Activity_TeleportIn after arriving
@@ -230,6 +233,13 @@ public:
                    bool anyActivity = false) const;
     // Whether the unit can take dig jobs (vehicles: a drill null in the model).
     static bool CanDig(const GameObject& o);
+    // Vehicles: whether they collect (flag 0x40 of LegoObject_Create: a carry null and CrossLand),
+    // how many objects fit (MaxCarry, at most CarryNullFrames), and whether the load is ready to
+    // go to storage: full, or standing still for 75 units with something on board
+    // (LegoObject_VehicleMaxCarryChecksTime_FUN_00439c80).
+    static bool CanCollect(const GameObject& v);
+    static int CargoCapacity(const GameObject& v);
+    static bool LoadReady(const GameObject& v);
     // Puts a building on its origin block facing a direction (0..3) and claims its footprint.
     void PlaceBuilding(GameObject& o, BlockPos origin, int dir);
 

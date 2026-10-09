@@ -66,11 +66,18 @@ Next:
      name lookups; now `FindUpgradePart`) and play the vehicle's activity; missing DrillSound /
      DrillFadeSound fall back to SFX_Drill / SFX_DrillFade; a vehicle clears all rubble layers in
      one pass. The Small Digger's hard-rock time really is 180 s (Lego.cfg).
-   - **3b (next):** carriers collect and deposit several items. Flag 0x20 = model has
-     `CarryNullName`, 0x40 = that plus CrossLand (collects); `MaxCarry` per upgrade level,
-     `CarryStart`, `CarryNullFrames` carry nulls. Small Truck and Bulldozer collect on land;
-     the cats carry on water. Collect checks are in `AITask_FUN_00404ef0` (type 3:
-     `LegoObject_FUN_00439e90`, `LegoObject_FUN_00439e40`, `AITask_LiveObject_FUN_00404e00`).
+   - **3b (built, awaiting play-test):** carriers collect and deposit several items. A vehicle
+     collects if its model has `CarryNullName` and it crosses land (flag 0x40); it holds
+     min(`MaxCarry`, `CarryNullFrames`) objects of one type on carry null `CarryStart` + slot, takes
+     plain ore and charged crystals only, and only if a building takes them (tool stores for
+     `EnterToolStore` vehicles, otherwise a ProcessOre/ProcessCrystal building). It keeps
+     collecting until full or it has stood still for 75 units, then delivers the whole load at
+     once (`LegoObject_ProccessCarriedObjects`). Only the Small Truck collects without upgrades
+     (Bulldozer MaxCarry is 0 until the carry upgrade). Vehicles keep their load in
+     `GameObject::cargo`; raiders still use `carried`. Test: `scripts	est-vehicles.bat` (spawns
+     ore and crystals with collect jobs).
+     Open: the cats carrying on water, other objects (barriers, dynamite), vehicles carrying
+     raiders (`TakeCarryingDrivers`), unloading on the ground (UnLoadVehicle menu item).
 4. **Ground following.** Wheels sit on the terrain and the body tilts to match
    (`Vehicle_SetPosition`). Without it the Bulldozer sinks into sloped floor when its clearing
    animation backs it up (reported in play-testing).

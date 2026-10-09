@@ -131,6 +131,10 @@ public:
 
 private:
     bool CanDo(const Task& t, const GameObject& unit, const world::Level& level) const;
+    bool VehicleCanCollect(const Task& t, const GameObject& vehicle, const ObjectList* objects) const;
+    // Where a unit takes a load of this type (storage, or a processing building for vehicles
+    // that may not enter tool stores).
+    GameObject* DepositBuilding(const ObjectList& objects, const GameObject& unit, ObjType load) const;
     bool HasGetToolTask(ToolType tool) const;
     static ToolType ToolFor(TaskType t);
     bool Start(Task& t, GameObject& unit, ObjectList& objects, world::Level& level);
@@ -141,7 +145,8 @@ private:
     std::array<bool, size_t(PriorityType::Count)> priorityOff_{};
     std::vector<PriorityType> order_, initialOrder_;
     std::vector<bool> initialOff_;
-    unsigned approachCounter_ = 0;  // rotates the side units approach walls from
+    unsigned approachCounter_ = 0;
+    const ObjectList* objects_ = nullptr;  // the level's objects, for checks that search them  // rotates the side units approach walls from
 };
 
 // Drill time for a terrain in game units (0 = cannot drill); stats seconds are scaled by 25.

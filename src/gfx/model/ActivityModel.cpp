@@ -34,6 +34,7 @@ std::shared_ptr<ActivityModel> LoadActivityModel(const std::string& folder, cons
     model->cameraNull = ae.GetString("Lego*::CameraNullName", "");
     model->drillNull = ae.GetString("Lego*::DrillNullName", "");
     model->carryNull = ae.GetString("Lego*::CarryNullName", "");
+    model->carryNullFrames = ae.GetInt("Lego*::CarryNullFrames").value_or(0);
     model->depositNull = ae.GetString("Lego*::DepositNullName", "");
     model->toolNull = ae.GetString("Lego*::ToolNullName", "");
     model->wheelNull = ae.GetString("Lego*::WheelNullName", "");
