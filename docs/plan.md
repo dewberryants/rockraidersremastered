@@ -24,9 +24,8 @@ Playable: Level 1 start to finish, and the early missions as far as their system
   vehicle and the first raider on foot for an upgrade).
 
 **Next: milestone 2, building functions.** Steps 1 to 3 (building upgrades, Upgrade Station,
-Ore Refinery) are play-tested; the Support Station (step 4) is built and waits for the
-play-test (`scripts\test-support.bat`). Then the rest of step 5, starting with the power-off
-bubbles.
+Ore Refinery) and 4 (Support Station) are play-tested. Next: step 5, starting with the
+power-off bubbles and the Power On/Off item.
 
 ## How we work
 
@@ -171,7 +170,7 @@ reaches nothing without the added paths.
      its fetches bring studs. Building upgrades fall back to 1 stud without 5 ore.
    - Not yet: the "Building Studs" side bar text, the help window, collected-object counts
      exactly as the game keeps them (ore counts as picked up when stored or refined).
-4. **Support Station** (built, waiting for the play-test; `scripts\test-support.bat`, with
+4. **Support Station** (play-tested; `scripts\test-support.bat`, with
    `RR_DEBUG_OXYGEN="air[,OxygenRate]"` and `RR_DEBUG_ENERGY=n`).
    - *Air:* the level starts at 100. Every object changes it by OxygenCoef x OxygenRate x 0.001
      x 0.04 per game unit (`Level_ConsumeObjectOxygen`; buildings only with power): Rock
