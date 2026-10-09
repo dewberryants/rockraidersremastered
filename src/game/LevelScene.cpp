@@ -111,6 +111,13 @@ public:
                 level_.UpdateSurface(x, y);
             }
         }
+        // RR_DEBUG_OXYGEN="air[,rate]" starts the air supply at that level (and with that
+        // OxygenRate); RR_DEBUG_ENERGY=n gives the level's Rock Raiders that much energy.
+        if (const char* ox = std::getenv("RR_DEBUG_OXYGEN")) {
+            const auto v = SplitTokens(ox, ",");
+            if (!v.empty()) oxygen_ = float(std::atof(std::string(v[0]).c_str()));
+            if (v.size() > 1) debugOxygenRate_ = float(std::atof(std::string(v[1]).c_str())) * 0.001f;
+        }
         if (const char* stock = std::getenv("RR_DEBUG_STOCK")) {
             const auto v = SplitTokens(stock, ",");
             crystals_ = std::atoi(std::string(v[0]).c_str());
@@ -138,6 +145,9 @@ public:
                 if (o && (o->type == ObjType::Ore || o->type == ObjType::PowerCrystal)) tasks_.CreateCollect(*o);
             }
         }
+        if (const char* en = std::getenv("RR_DEBUG_ENERGY"))
+            for (const auto& o : objects_.objects())
+                if (o->type == ObjType::MiniFigure) o->energy = float(std::atof(en));
         // RR_DEBUG_LAYPATH="x,y;..." lays power paths to be built.
         if (const char* laid = std::getenv("RR_DEBUG_LAYPATH")) {
             for (std::string_view entry : SplitTokens(laid, ";")) {
@@ -189,6 +199,7 @@ public:
         dynamiteMaxDamage_ = cfg.GetFloat(game.Id("Main", "DynamiteMaxDamage")).value_or(150.0f);
         upgradeCostOre_ = cfg.GetInt(game.Id("Main", "BuildingUpgradeCostOre")).value_or(0);
         upgradeCostStuds_ = cfg.GetInt(game.Id("Main", "BuildingUpgradeCostStuds")).value_or(0);
+        tasks_.minEnergyForEat = cfg.GetFloat(game.Id("Main", "MinEnergyForEat")).value_or(25.0f);
         oreRequiredText_ = cfg.GetString(game.Id("ToolTipInfo", "OreRequiredText"), "");
         std::replace(oreRequiredText_.begin(), oreRequiredText_.end(), '_', ' ');
         objects_.crystalColour = rgb("PowerCrystalRGB", {0.0f, 1.0f, 0.0f});
@@ -567,9 +578,16 @@ public:
             const GameObject* bld = selection_.Primary();
             return bld && bld->type == ObjType::Building && BuildingUpgradeCost(*bld, studs);
         }
+        case MenuItem::GoFeed:
+            // Interface_ObjectCallback_IsEnergyBelowMax: any selected unit short of energy.
+            for (const GameObject* u : selection_.units())
+                if (u->energy < 100.0f) return true;
+            return false;
         case MenuItem::TeleportMan: {
-            // A building that can beam Rock Raiders in, and room in the queue.
+            // A building that can beam Rock Raiders in, room in the queue, and air for another.
             if (teleportQueue_.size() >= kMaxTeleportQueue) return false;
+            if (const ObjectTypeInfo* pilot = GetObjectRegistry().Get(ObjType::MiniFigure, 0))
+                if (!AirSupports(*pilot)) return false;
             for (const auto& o : objects_.objects())
                 if (o->type == ObjType::Building && !o->removed && !o->hidden && o->stats &&
                     (o->stats->F1(o->level) & StatsFlag1::ManTeleporter))
@@ -807,6 +825,12 @@ public:
             // Lego_TryTeleportObject: Rock Raiders wait for a teleporter (LegoObject_QueueTeleport).
             if (const ObjectTypeInfo* pilot = GetObjectRegistry().Get(ObjType::MiniFigure, 0))
                 if (teleportQueue_.size() < kMaxTeleportQueue) teleportQueue_.push_back(pilot);
+            break;
+        case MenuItem::GoFeed:
+            // Interface_ObjectCallback_GoEatIfEnergyBelowMax: every selected unit short of energy
+            // with empty hands eats where it stands.
+            for (GameObject* u : selection_.units())
+                if (u->energy < 100.0f && objects_.StartEating(*u)) tasks_.ReleaseUnit(*u);
             break;
         case MenuItem::UnLoadMinifigure:
         case MenuItem::UnLoadVehicle:
@@ -1049,6 +1073,11 @@ public:
         else if (name == "GetCrystalsPickedUp") return crystalsPickedUp_;
         else if (name == "GetOreCurrentlyStored") return ore_;
         else if (name == "GetStudCount") return studs_;
+        else if (name == "GetOxygenLevel") {
+            // NERPFunc__GetOxygenLevel: as decompiled it never reports below 1 (the game keeps
+            // 1 while teleporters still have work, Teleporter_ServiceAll).
+            return std::max(1, int(oxygen_));
+        }
         else if (name == "GetOrePickedUp") return orePickedUp_;
         else if (name == "AddStoredOre") return ore_ += args[0];
         else if (name == "GetMiniFiguresOnLevel") return CountObjects("Pilot");
@@ -1107,8 +1136,7 @@ public:
                                   ((uf2 & StatsFlag2::UseWaterTeleporter) && (bf1 & StatsFlag1::WaterTeleporter)) ||
                                   ((uf2 & StatsFlag2::UseLegoManTeleporter) && (bf1 & StatsFlag1::ManTeleporter));
                 const int cost = us ? int(us->Num("CostCrystal", 0)) : 0;
-                if (!fits || cost > crystals_) continue;
-                // TODO(oxygen): only if the air supply supports another unit.
+                if (!fits || cost > crystals_ || !AirSupports(info)) continue;
                 // Arrives at the building's deposit point; TODO(models): use the real null, this
                 // is the block in front (the building's path tile direction).
                 const int dir = int(std::lround(b.heading / (kPi * 0.5f))) & 3;
@@ -1196,6 +1224,96 @@ public:
         for (int i = 0; i < z->crystalsNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::PowerCrystal);
         for (int i = 0; i < z->oreNeeded; ++i) tasks_.CreateRequest(z->handle, ObjType::Ore);
         zones_.push_back(std::move(z));
+    }
+
+    float OxygenCoef(const GameObject& o) const { return o.stats ? o.stats->Num("OxygenCoef", o.level) : 0.0f; }
+    float OxygenRate() const { return debugOxygenRate_ >= 0.0f ? debugOxygenRate_ : level_.settings().oxygenRate; }
+
+    // LegoObject_CanSupportOxygenForType: a type that uses air (OxygenCoef) only comes in while
+    // its coefficient, the level's sum (buildings only when active) and one Support Station
+    // (Barracks) more would still add up to more than zero.
+    bool AirSupports(const ObjectTypeInfo& type) const {
+        const ObjectStats* st = GetStats().Find(type.name);
+        const float own = st ? st->Num("OxygenCoef", 0) : 0.0f;
+        if (own == 0.0f) return true;
+        float sum = 0.0f;
+        for (const auto& o : objects_.objects())
+            if (!o->removed && (o->type != ObjType::Building || BuildingActive(*o))) sum += OxygenCoef(*o);
+        const ObjectStats* station = GetStats().Find("Barracks");
+        return own + (station ? station->Num("OxygenCoef", 0) : 0.0f) + sum > 0.0f;
+    }
+
+    // Level_ConsumeObjectOxygen for every object (buildings only with power): the air changes by
+    // OxygenCoef x OxygenRate x 0.04 per game unit, up to 100. Out of air, the level is lost.
+    // Lego_MainLoop: below 10% the heartbeat loops (SND_AirBeat) and the meter's warning flashes.
+    // TODO(interface): the air messages (Info_Send 0x10..0x13, Text_AirSupplyLow / RunningOut)
+    // every 5% it drops, and the heartbeat's volume rising as the air runs out.
+    void UpdateAir(float elapsed) {
+        const float rate = OxygenRate();
+        if (rate != 0.0f) {
+            float sum = 0.0f;
+            for (const auto& o : objects_.objects())
+                if (!o->removed && (o->type != ObjType::Building || o->powered)) sum += OxygenCoef(*o);
+            oxygen_ = std::min(100.0f, oxygen_ + elapsed * 0.04f * rate * sum);
+            if (oxygen_ <= 0.0f) {
+                oxygen_ = 0.0f;
+                if (levelStatus_ == 0 && !cheats_) {
+                    RR_INFO("Out of air: level failed");
+                    levelStatus_ = 2;
+                    objective_.Show(ObjectiveWindow::State::Failed);
+                }
+            }
+        }
+        const bool low = oxygen_ <= 10.0f;
+        if (low && airBeat_ < 0) {
+            int id = 0;
+            if (GetSfx().GetType("SND_AirBeat", id)) airBeat_ = GetSfx().PlayNormal(id, true);
+        } else if (!low && airBeat_ >= 0) {
+            GetSfx().Stop(airBeat_);
+            airBeat_ = -1;
+        }
+    }
+
+    // LegoObject_UpdateEnergyHealthAndContact: energy drains by EnergyDecayRate x 0.04 per game
+    // unit. A Rock Raider below MinEnergyForEat percent of its health looks for the nearest
+    // working Support Station (SnaxULike) every 125 units, unless the level says NoAutoEat, and
+    // queues a meal there if it can walk beside it.
+    // TODO(bubbles): the hungry bubble (Bubble_Eat).
+    void UpdateEnergy(float elapsed) {
+        for (const auto& op : objects_.objects()) {
+            GameObject& o = *op;
+            if (o.removed || o.type == ObjType::Boulder || o.type == ObjType::UpgradePart || !o.stats) continue;
+            if (o.energy <= 0.0f) o.energy = 0.0f;
+            else o.energy -= o.stats->Num("EnergyDecayRate", o.level) * 0.04f * elapsed;
+            if (o.type == ObjType::MiniFigure && !level_.settings().noAutoEat &&
+                o.energy < o.health * 0.01f * tasks_.minEnergyForEat && o.eatTimer > 125.0f) {
+                o.eatTimer = 0.0f;
+                if (!o.driving && !tasks_.HasUnitTask(o, TaskType::GotoEat))
+                    if (GameObject* food = NearestSnackBar(o))
+                        if (tasks_.CanReachSide(level_, objects_, o, *food)) {
+                            tasks_.CreateGotoEat(*food, o);
+                            RR_INFO("%s is hungry (energy %.0f)", o.info->name.c_str(), o.energy);
+                        }
+            }
+            if (o.health < o.energy) o.energy = o.health;
+        }
+    }
+
+    // LegoObject_FindSnackServingBuilding: the nearest active SnaxULike building.
+    GameObject* NearestSnackBar(const GameObject& u) const {
+        GameObject* best = nullptr;
+        float bestD = 10000.0f;
+        for (const auto& o : objects_.objects()) {
+            if (o->type != ObjType::Building || !o->stats || !(o->stats->F1(o->level) & StatsFlag1::SnaxULike) ||
+                !BuildingActive(*o))
+                continue;
+            const float d = std::hypot(o->position.x - u.position.x, o->position.y - u.position.y);
+            if (d < bestD) {
+                bestD = d;
+                best = o.get();
+            }
+        }
+        return best;
     }
 
     // LegoObject_UpdateBuildingPlacement / Construction_Zone_RequestPathResources: with an active
@@ -1802,6 +1920,8 @@ public:
         for (const world::Level::SeamYield& y : level_.TakeSeamYields())
             GenerateResource({y.x, y.y}, y.crystal ? ObjType::PowerCrystal : ObjType::Ore, true);
         objects_.Update(elapsed);
+        UpdateEnergy(elapsed);
+        UpdateAir(elapsed);
         // Level_UpdateEffects: finished rock falls release the block (RockFallComplete).
         rockFallsDone_.clear();
         GetGame().rockFalls.Update(elapsed, rockFallsDone_);
@@ -1955,6 +2075,13 @@ public:
         res.ore = ore_;
         res.studs = studs_;
         game.panels->DrawSideBar(r2d, game.toolTipFont.get(), res, frameElapsed);
+        // Interface_GetFlashingState toggles every 15 units of real time.
+        flashTimer_ -= frameElapsed;
+        if (flashTimer_ < 0.0f) {
+            flashOn_ = !flashOn_;
+            flashTimer_ = 15.0f;
+        }
+        game.panels->DrawMessagePanel(r2d, oxygen_, oxygen_ <= 10.0f && flashOn_);
         // TODO(interface): the message panel's text window and speech; plain text for now.
         if (const Font* f = game.textFont.get()) {
             r2d.SetAnchor(Anchor::Left);
@@ -2049,6 +2176,11 @@ private:
     nerps::Runtime script_;
     std::string message_;
     int levelStatus_ = 0;  // 1 completed, 2 failed (Objective_SetStatus)
+    float oxygen_ = 100.0f;          // the air supply, 0..100 (level 0x1fc)
+    float debugOxygenRate_ = -1.0f;  // RR_DEBUG_OXYGEN rate, < 0 = the level's
+    int airBeat_ = -1;               // SND_AirBeat loop while the air is low
+    float flashTimer_ = 15.0f;       // Interface_FUN_0041b860: warnings flash every 15 units
+    bool flashOn_ = false;
     bool cheats_ = false, fastForward_ = false, infiniteStock_ = false;
     int debugTrainTick_ = 0, debugDynamiteTick_ = 0, debugUpgradeTick_ = 0;
     BlockPos debugDynamite_{-1, -1};

@@ -76,6 +76,9 @@ public:
     // The icon menu panel is drawn between these two calls.
     void DrawPanels(Renderer2D& r, float elapsed);
     void DrawSideBar(Renderer2D& r, const Font* font, const Resources& res, float elapsed);
+    // Text_Update: the message panel at its fixed place with the air meter on it
+    // (Panel_AirMeter_DrawJuice / DrawOxygenLow); `warning` shows the flashing no-air sign.
+    void DrawMessagePanel(Renderer2D& r, float oxygen, bool warning);
 
 private:
     struct Button {
@@ -99,7 +102,7 @@ private:
     bool OverImage(const Panel& p, float mx, float my) const;
 
     std::array<Panel, size_t(PanelType::Count)> panels_;
-    std::unique_ptr<Image> smallCrystal_, usedCrystal_, noSmallCrystal_, oreMeter_;
+    std::unique_ptr<Image> smallCrystal_, usedCrystal_, noSmallCrystal_, oreMeter_, airJuice_, noAir_;
     float oreMeterX_ = 615, oreMeterY_ = 434, oreMeterLength_ = 423;
     float oreMeterFill_ = 0.0f;  // 0..1
     int oreMeterCount_ = 0;      // ore units the fill reflects

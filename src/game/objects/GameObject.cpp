@@ -269,6 +269,7 @@ void ObjectList::Update(float elapsed) {
         GameObject& o = *op;
         if (o.removed) continue;
         if (o.type == ObjType::MiniFigure) o.trainTimer += elapsed;
+        o.eatTimer += elapsed;
         if (o.driving) {
             // A seated driver only plays its drive animation: the AI and routing leave it alone
             // (flag 0x8 of flags2) and the vehicle sets its activity and position.
@@ -535,6 +536,11 @@ void ObjectList::StartAction(GameObject& o, uint8_t action, BlockPos block, Game
             }
         }
         break;
+    case RouteAction::Eat:
+        // Route flag 0x40000000 at the Support Station: the unit eats (Activity_Eat).
+        o.state = UnitState::Eating;
+        o.SetActivity(ActivityType::Eat);
+        break;
     case RouteAction::Clear:
         o.state = UnitState::Clearing;
         // Minifigures sweep the rubble twice per layer.
@@ -712,6 +718,20 @@ void ObjectList::UpdateAction(GameObject& o, float elapsed) {
         break;
     case UnitState::Training:
         if (o.animOverrun > 0.0f) FinishAction(o, true);
+        break;
+    case UnitState::Eating:
+        // LegoObject_Add25EnergyAndSetHealth at the end of each loop, until the energy reaches
+        // the unit's health.
+        if (o.animOverrun > 0.0f) {
+            o.energy += 25.0f;
+            if (o.energy >= o.health) {
+                o.energy = o.health;
+                FinishAction(o, true);
+            } else {
+                o.activity = ActivityType::Count;  // the next mouthful
+                o.SetActivity(ActivityType::Eat);
+            }
+        }
         break;
     case UnitState::Upgrading: {
         GameObject* site = o.stateTarget;
@@ -1280,6 +1300,16 @@ void ObjectList::Board(GameObject& unit, GameObject& v) {
     SetDriverAnim(v);
     UpdateDriverPosition(v);
     if (onBoard) onBoard(unit, v);
+}
+
+bool ObjectList::StartEating(GameObject& o) {
+    if (o.type != ObjType::MiniFigure || o.carried || o.driving || o.removed) return false;
+    if (o.routing) RouteEnd(o, false);
+    if (o.state != UnitState::Idle) FinishAction(o, false);
+    o.state = UnitState::Eating;
+    o.stateTarget = nullptr;
+    o.SetActivity(ActivityType::Eat);
+    return true;
 }
 
 bool ObjectList::GetOut(GameObject& v) {

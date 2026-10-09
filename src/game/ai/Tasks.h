@@ -85,6 +85,16 @@ public:
     // AITask_DoUpgrade: a minifigure goes up a level at a tool store, or a vehicle has an
     // upgrade fitted at an Upgrade Station. Only that unit takes the task.
     Task* CreateUpgrade(GameObject& building, int upgradeType, GameObject& unit);
+    // AITask_QueueGotoEat_Target: a hungry unit queues a meal at a Support Station on its own
+    // task list, after the work it has (it comes before anything else once the unit is free).
+    Task* CreateGotoEat(GameObject& building, GameObject& unit);
+    bool HasUnitTask(const GameObject& unit, TaskType type) const;
+    // LegoObject_UpdateEnergyHealthAndContact: whether the unit has a route to one of the four
+    // blocks beside the building (north, east, south, west).
+    bool CanReachSide(const world::Level& level, const ObjectList& objects, const GameObject& unit,
+                      const GameObject& building) const;
+    // MinEnergyForEat (Lego.cfg Main): a unit eats below this percentage of its health.
+    float minEnergyForEat = 25.0f;
     // An Upgrade Station is taken while another vehicle holds an upgrade task for it (the
     // station's object 0xc0 in the game).
     bool StationTaken(const GameObject& station, const GameObject& vehicle) const;

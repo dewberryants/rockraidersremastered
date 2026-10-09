@@ -75,6 +75,8 @@ struct LevelSettings {
     float roofHeight = 40.0f;
     float roughLevel = 0.0f;
     float trainTime = 0.0f;  // TrainTime x 25: a unit can train again once this long has passed
+    float oxygenRate = 0.0f; // OxygenRate x 0.001: how fast OxygenCoefs change the air
+    bool noAutoEat = false;  // hungry units do not go to a Support Station by themselves
     bool useRoof = false;
     std::string textureSet;
     bool fog = false;

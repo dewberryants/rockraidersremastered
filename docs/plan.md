@@ -23,9 +23,10 @@ Playable: Level 1 start to finish, and the early missions as far as their system
   `RR_DEBUG_PATH="x,y;..."` lays power paths; `RR_DEBUG_UPGRADE="tick,type"` sends the first
   vehicle and the first raider on foot for an upgrade).
 
-**Next: milestone 2, building functions.** Steps 1 and 2 (building upgrades, Upgrade Station)
-are play-tested; step 3 (Ore Refinery) is built and waits for the play-test. Then the rest of
-step 4, starting with the Support Station or power-off bubbles.
+**Next: milestone 2, building functions.** Steps 1 to 3 (building upgrades, Upgrade Station,
+Ore Refinery) are play-tested; the Support Station (step 4) is built and waits for the
+play-test (`scripts\test-support.bat`). Then the rest of step 5, starting with the power-off
+bubbles.
 
 ## How we work
 
@@ -96,7 +97,7 @@ vehicles carrying barriers, the get-in mouse pointer, reversing and turning (mil
 
 ## 2. Building functions (next)
 
-Tests: `scripts\test-refinery.bat` (below) and `scripts\test-buildings.bat` (Level18: Tool Store, Power Station, Teleport Pad, Support
+Tests: `scripts\test-support.bat`, `scripts\test-refinery.bat` (below) and `scripts\test-buildings.bat` (Level18: Tool Store, Power Station, Teleport Pad, Support
 Station, two Mining Lasers, Geological Center; added an Upgrade Station at 19,30 with power
 paths to it and the Tool Store, a Small Digger, Hover Scout and Small Truck, three trained
 raiders; 10 crystals and 50 ore). Level18 has no raiders of its own and its Power Station
@@ -149,7 +150,7 @@ reaches nothing without the added paths.
      add "(UP1)".. from UpgradeNames); a Rock Raider's adds its tools with blank slots up to
      NumOfToolsCanCarry, and its skills (`ToolTipIcons`). Not yet: the hover delay, health,
      a vehicle's driver name, the tooltip sound.
-3. **Ore Refinery** (built, waiting for the play-test; `scripts\test-refinery.bat`).
+3. **Ore Refinery** (play-tested; `scripts\test-refinery.bat`).
    - *Where loads go:* every building posts a deposit task on arrival (`LegoObject_FUN_00438720`):
      storage takes anything at Storage priority, an active Ore Refinery raw ore and a Power
      Station charged crystals at Refining priority. Units take the highest priority, then the
@@ -170,9 +171,32 @@ reaches nothing without the added paths.
      its fetches bring studs. Building upgrades fall back to 1 stud without 5 ore.
    - Not yet: the "Building Studs" side bar text, the help window, collected-object counts
      exactly as the game keeps them (ore counts as picked up when stored or refined).
-4. **Further building functions:**
-   - **Support Station:** oxygen supply (`OxygenCoef`) and raiders eating to restore energy
-     (GoFeed, Eat).
+4. **Support Station** (built, waiting for the play-test; `scripts\test-support.bat`, with
+   `RR_DEBUG_OXYGEN="air[,OxygenRate]"` and `RR_DEBUG_ENERGY=n`).
+   - *Air:* the level starts at 100. Every object changes it by OxygenCoef x OxygenRate x 0.001
+     x 0.04 per game unit (`Level_ConsumeObjectOxygen`; buildings only with power): Rock
+     Raiders -1, a Support Station (Barracks) +10, up to 100. At 0 the level is lost. The
+     message panel is now drawn (42,409, `Text_Initialise`) with the air meter on it: the juice
+     stretched to 236 x air% at 85,6, and below 10% the flashing no-air sign at 21,0
+     (`Interface_GetFlashingState`, every 15 units) and the looping SND_AirBeat heartbeat.
+     NERP `GetOxygenLevel` (never below 1, as decompiled).
+   - *Teleport limit* (`LegoObject_CanSupportOxygenForType`): a type that breathes is only
+     beamed in (TeleportMan item, and the teleporter queue) while its OxygenCoef, the level's
+     sum and one Support Station more add up to more than 0 - without a station that allows
+     9 Rock Raiders, each powered station 10 more.
+   - *Energy:* drains by EnergyDecayRate x 0.04 per unit (Pilot 0.25: 100 lasts 400 s). Below
+     MinEnergyForEat (25%) of its health, every 125 units, a Rock Raider not driving looks for
+     the nearest active SnaxULike building it can walk beside and queues a GotoEat task on
+     its own list (`LegoObject_UpdateEnergyHealthAndContact`, `AITask_QueueGotoEat_Target`;
+     not on NoAutoEat levels). Ours takes it first once the unit is free (priority 100).
+     It stops in the middle of a side, facing the station (`LegoObject_TryGoEat`), and eats:
+     Activity_Eat, +25 energy per loop until it reaches the unit's health.
+   - *GoFeed* (item 0x1f): enabled while a selected unit is short of energy; each such unit with
+     empty hands stops and eats where it stands (`LegoObject_GoEat_unk`).
+   - Not yet: the air messages (Info 0x10..0x13, Text_AirSupplyLow / RunningOut every 5% it
+     drops), the heartbeat's rising volume, the hungry bubble, the Rest activity after
+     carrying (RestPercent, `LegoObject_UpdateCarryingEnergy`), the message panel's text window.
+5. **Further building functions:**
    - **Geological Center:** scanning reveals the map around it (ScanRange) and on the radar.
    - **Mining Laser:** turret firing at monsters (`Weapon_*`).
    - **Docks, Super Teleport:** water and large vehicles (with milestone 1).

@@ -22,6 +22,7 @@ const char* const kPriorityNames[int(PriorityType::Count)] = {
 };
 
 constexpr float kRetryTime = 75.0f;  // game units before a task whose route failed is offered again
+constexpr int kOwnTaskPriority = 100;  // above every priority class (0..99)
 
 // Block route that also covers standing in the target block already (a one-node route).
 bool RouteBlocks(const world::Level& level, const GameObject& unit, BlockPos from, BlockPos to,
@@ -243,6 +244,33 @@ Task* TaskSystem::CreateUpgrade(GameObject& building, int upgradeType, GameObjec
     return t;
 }
 
+Task* TaskSystem::CreateGotoEat(GameObject& building, GameObject& unit) {
+    // Not a priority class of its own: the unit's own list is worked through first.
+    Task* t = NewTask(tasks_, TaskType::GotoEat, PriorityType::HealthLow, kOwnTaskPriority);
+    t->target = &building;
+    t->forUnit = &unit;
+    return t;
+}
+
+bool TaskSystem::HasUnitTask(const GameObject& unit, TaskType type) const {
+    for (const auto& t : tasks_)
+        if (t->type == type && !t->remove && (t->forUnit == &unit || t->assigned == &unit)) return true;
+    return false;
+}
+
+bool TaskSystem::CanReachSide(const world::Level& level, const ObjectList& objects, const GameObject& unit,
+                              const GameObject& building) const {
+    BlockPos from, bb;
+    if (!objects.BlockOf(unit, from) || !objects.BlockOf(building, bb)) return false;
+    static const int kDx[4] = {0, 1, 0, -1}, kDy[4] = {-1, 0, 1, 0};
+    std::vector<BlockPos> route;
+    for (int d = 0; d < 4; ++d) {
+        const BlockPos n{bb.x + kDx[d], bb.y + kDy[d]};
+        if (level.InBounds(n.x, n.y) && RouteBlocks(level, unit, from, n, route)) return true;
+    }
+    return false;
+}
+
 bool TaskSystem::StationTaken(const GameObject& station, const GameObject& vehicle) const {
     for (const auto& t : tasks_)
         if (t->type == TaskType::Upgrade && t->target == &station && !t->remove && t->forUnit &&
@@ -343,7 +371,8 @@ Vec2 TaskSystem::TaskPosition(const Task& t, const world::Level& level) const {
 bool TaskSystem::CanDo(const Task& t, const GameObject& unit, const world::Level& level) const {
     if (t.retryTimer > 0.0f || t.remove || t.assigned) return false;
     if (t.forUnit && t.forUnit != &unit) return false;
-    if (priorityOff_[size_t(t.priorityType)] && t.type != TaskType::GetTool) return false;
+    if (priorityOff_[size_t(t.priorityType)] && t.type != TaskType::GetTool && t.type != TaskType::GotoEat)
+        return false;
     // AITask_FUN_00404ef0: vehicles take tasks only with a driver.
     // TODO(ai): rock monsters take tasks too.
     if (!unit.stats) return false;
@@ -387,6 +416,10 @@ bool TaskSystem::CanDoIgnoringTools(const Task& t, const GameObject& unit, const
     case TaskType::BuildPath: return !(level.block(t.block.x, t.block.y).flags & world::BlockFlag::Path);
     case TaskType::GetTool: return t.tool != ToolType::Count && !unit.HasTool(t.tool);
     case TaskType::Train: return t.target && !t.target->removed && !(unit.abilities & t.ability);
+    case TaskType::GotoEat:
+        // AITask_FUN_00404ef0: a working Support Station and a unit still hungry.
+        return t.target && !t.target->removed && t.target->powered && unit.type == ObjType::MiniFigure &&
+               unit.energy <= unit.health * 0.01f * minEnergyForEat;
     case TaskType::Upgrade:
         if (!t.target || t.target->removed) return false;
         if (unit.type == ObjType::Vehicle)
@@ -519,9 +552,11 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
             break;
         }
         [[fallthrough]];  // minifigures: LegoObject_TryTrain with the upgrade action
+    case TaskType::GotoEat:
     case TaskType::Train: {
         // LegoObject_TryTrain: on a block beside the building, 4 units from the shared edge at a
-        // random point along it, facing the building.
+        // random point along it, facing the building. LegoObject_TryGoEat stops in the middle
+        // of the edge instead.
         BlockPos bb;
         if (!t.target || !objects.BlockOf(*t.target, bb)) return false;
         static const int kDx[4] = {0, 1, 0, -1}, kDy[4] = {-1, 0, 1, 0};
@@ -538,12 +573,14 @@ bool TaskSystem::Start(Task& t, GameObject& unit, ObjectList& objects, world::Le
             if (!RouteBlocks(level, unit, from, n, route)) continue;
             const Vec2 nc = map.BlockCentre(n.x, n.y), bc = map.BlockCentre(bb.x, bb.y);
             const Vec2 dir{(bc.x - nc.x) / bs, (bc.y - nc.y) / bs};  // towards the building
-            const float along = (random::RandRange(0.1f, 0.9f) - 0.5f) * bs;
+            const float along = t.type == TaskType::GotoEat ? 0.0f : (random::RandRange(0.1f, 0.9f) - 0.5f) * bs;
             const Vec2 at{nc.x + dir.x * (bs * 0.5f - 4.0f) - dir.y * along,
                           nc.y + dir.y * (bs * 0.5f - 4.0f) + dir.x * along};
             if (!objects.RouteBegin(unit, route, &at)) return false;
             const uint8_t face = dir.y > 0.5f ? 0 : dir.x > 0.5f ? 1 : dir.y < -0.5f ? 2 : 3;
-            unit.route.back().action = t.type == TaskType::Upgrade ? RouteAction::Upgrade : RouteAction::Train;
+            unit.route.back().action = t.type == TaskType::Upgrade   ? RouteAction::Upgrade
+                                       : t.type == TaskType::GotoEat ? RouteAction::Eat
+                                                                     : RouteAction::Train;
             unit.route.back().flags |= RouteFlag::Face | face;
             unit.stateTarget = t.target;
             routed = true;
@@ -621,6 +658,10 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
              (t->forUnit->type == ObjType::Vehicle ? !ObjectList::CanUpgradeType(*t->forUnit, t->upgradeType, true)
                                                    : t->forUnit->stats->levels <= t->forUnit->level + 1)))
             t->remove = true;
+        // A meal the unit no longer needs (it ate where it stood).
+        if (t->type == TaskType::GotoEat && !t->assigned && t->forUnit &&
+            (t->forUnit->removed || t->forUnit->energy >= t->forUnit->health))
+            t->remove = true;
         // A unit that stopped working on its task without finishing it (route abandoned, unit
         // selected, removed...) gives the task back.
         if (GameObject* u = t->assigned) {
@@ -694,7 +735,8 @@ void TaskSystem::Update(ObjectList& objects, world::Level& level, float elapsed)
     // Highest priority first; the list already holds newer tasks before older ones.
     std::vector<Task*> order;
     for (auto& t : tasks_) {
-        if (t->type != TaskType::GetTool) t->priority = priorityValue_[size_t(t->priorityType)];
+        if (t->type != TaskType::GetTool && t->type != TaskType::GotoEat)
+            t->priority = priorityValue_[size_t(t->priorityType)];
         if (!t->assigned && !t->remove) order.push_back(t.get());
     }
     std::stable_sort(order.begin(), order.end(), [](const Task* a, const Task* b) { return a->priority > b->priority; });

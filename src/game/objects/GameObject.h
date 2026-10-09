@@ -40,7 +40,7 @@ constexpr uint32_t All = 0x3f;
 // What a unit is busy doing after arriving somewhere.
 enum class UnitState : uint8_t {
     Idle, Drilling, Clearing, Collecting, Depositing, Fetching, Placing, BuildingPath, GettingTool, Reinforcing,
-    Training, PlacingDynamite, Upgrading
+    Training, PlacingDynamite, Upgrading, Eating
 };
 
 // Vehicle upgrade types (LegoObject_UpgradeType): the bit each sets in the upgrade level, and the
@@ -127,6 +127,7 @@ struct GameObject {
     float wheelDrop[6] = {};
     BlockPos dynamiteTarget{-1, -1};       // dynamite: the wall it blows up
     float trainTimer = 0.0f;               // time since the last training (LegoObject_UpdateElapsedTimes)
+    float eatTimer = 0.0f;                 // [0xf7]: a hungry unit looks for food every 125 units
     bool crystalDrained = false;           // power crystal used up (UnpoweredCrystalRGB)
     bool powered = false;                  // building: drawing power (or generating it)
     bool powerOff = false;                 // building: switched off by the player
@@ -221,6 +222,9 @@ public:
     // LegoObject_FUN_00440470: the driver steps out at the vehicle's deposit null if the ground
     // there takes them. Returns false if nobody could get out.
     bool GetOut(GameObject& vehicle);
+    // LegoObject_GoEat_unk (Interface "GoFeed"): a minifigure with empty hands stops and eats
+    // where it stands (flags1 0x40000000), Activity_Eat, 25 energy per loop until full.
+    bool StartEating(GameObject& unit);
     // Notified when a carried object is delivered to a building (resources).
     std::function<void(GameObject& unit, GameObject& delivered, GameObject& building)> onDeposit;
     void Remove(GameObject& o);

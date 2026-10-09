@@ -107,7 +107,9 @@ void Panels::Load(const Config& cfg, std::string_view gameName) {
     usedCrystal_ = LoadKeyed("Interface\\RightPanel\\UsedCrystal.bmp");
     noSmallCrystal_ = LoadKeyed("Interface\\RightPanel\\NoSmallCrystal.bmp");
     oreMeter_ = Image::Load("Interface\\RightPanel\\crystalsidebar_ore.bmp");
-    // TODO(interface): air meter (Interface\AirMeter\...) for levels with oxygen.
+    // Panel_AirMeter_Initialise (Lego_LoadMiscObjects).
+    airJuice_ = Image::Load("Interface\\AirMeter\\msgpanel_air_juice.bmp");
+    noAir_ = LoadKeyed("Interface\\AirMeter\\msgpanel_noair.bmp");
     Reset();
 }
 
@@ -203,6 +205,20 @@ void Panels::DrawPanels(Renderer2D& r, float elapsed) {
         DrawPanel(r, t, elapsed);
     }
     // TODO(interface): encyclopedia, information and info dock panels.
+    r.SetAnchor(Anchor::Center);
+}
+
+void Panels::DrawMessagePanel(Renderer2D& r, float oxygen, bool warning) {
+    // Text_Initialise puts the panel at 42,409. The juice is stretched to 236 x oxygen% from
+    // 85,6 on the panel; the warning sits at 21,0.
+    constexpr float kX = 42.0f, kY = 409.0f;
+    r.SetAnchor(Anchor::Left);
+    if (const Image* img = panels_[size_t(PanelType::Messages)].image.get()) img->Draw(r, kX, kY);
+    if (airJuice_ && oxygen > 0.0f) {
+        const float w = 236.0f * 0.01f * std::min(oxygen, 100.0f), h = float(airJuice_->height());
+        airJuice_->Draw(r, kX + 85.0f, kY + 6.0f, nullptr, &w, &h);
+    }
+    if (noAir_ && warning) noAir_->Draw(r, kX + 21.0f, kY);
     r.SetAnchor(Anchor::Center);
 }
 
