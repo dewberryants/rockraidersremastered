@@ -31,7 +31,7 @@ report. Behaviour comes from the decompiled game; where we deliberately differ, 
 ## 1. Vehicles and drivers (in progress)
 
 What is done: teleporting vehicles in, their models, the unmanned vehicle menu, getting in and
-out (play-tested). Driving is built and waiting for the user's play-test.
+out, driving (both play-tested). Next up: vehicle jobs.
 
 Next:
 
@@ -46,13 +46,14 @@ Next:
    Test setup: `scripts	est-vehicles.bat` (Level02, three vehicles, every raider trained). Still open: water vehicles (docks, GetInAtLand/GetOutAtLand), several selected
    raiders answering a click, dropping a carried load first, TakeCarryingDrivers, the get-in
    pointer.
-2. **Driving** (built, awaiting play-test). Driven vehicles route like units
+2. **Driving** (done). Driven vehicles route like units
    (`Lego_GetCrossTerrainType` only blocks CanBeDriven vehicles without a driver) with their own
    RouteSpeed and terrain rules, and play Activity_Route. The original never plays StartUp or
    ShutDown (no such activity in the exe). EngineSound loops on every vehicle and building from
    arrival until removal, driven or not (`LegoObject_FUN_00438720`); one buffer per sample, so the
    latest object with that sound takes it. Reverse (route flag 2) is left for milestone 7.
-   Test: `scripts	est-vehicles.bat`.
+   Test: `scripts	est-vehicles.bat`. A goto click deselects the units, as in the original
+   (`Interface_BackToMain` posts a clear-selection); see the remaster option in milestone 8.
 3. **Vehicle jobs.**
    - Drilling vehicles take dig tasks (Small Digger, Chrome Crusher, Walker): drill times, drill
      null, drill sounds.
@@ -131,6 +132,12 @@ Buildings that are only built and powered today:
 
 Higher resolutions and widescreen interface, faster game speeds, quality-of-life options,
 and mod and override folders. Defaults always stay faithful to the original.
+
+Quality-of-life options asked for so far:
+
+- **Keep selection after a move order.** The original deselects units (raiders and vehicles)
+  after a goto click, because `Lego_HandleWorld` calls `Interface_BackToMain`. As an option,
+  the selection and its menu stay so a vehicle can be driven around with repeated clicks.
 
 ## Parked issues
 
