@@ -102,14 +102,18 @@ struct GameObject {
     GameObject* driver = nullptr;          // the minifigure driving it (null: unmanned)
     GameObject* driving = nullptr;         // minifigure: the vehicle it sits in (LegoObject driveObject)
     uint32_t upgradeLevel = 0;             // Upgrade level bits (engine, drill, scan, carry)
-    float wheelSpin = 0.0f;                // wheel rotation (distance / wheel radius)
+    // Vehicle_SetPosition: each wheel turns by the distance its own null moved over its radius,
+    // backwards when it moved backwards (so animations that shift the body turn them too).
+    float wheelSpin[6] = {};
+    Vec3f wheelLast[6];
+    int wheelsTracked = 0;                 // wheels with a valid wheelLast
+    const Activity* wheelAnim = nullptr;   // animation the wheel nulls were taken from
     // Vehicle_SetPosition: the vehicle rests on the ground under its wheels. groundNormal is the
     // smoothed ground normal (+Z is down; zero until first set), tiltDir/tiltUp the resulting
     // orientation and wheelDrop how far each wheel is moved down onto the floor.
     Vec3f groundNormal{0, 0, 0}, tiltDir{0, 1, 0}, tiltUp{0, 0, -1};
     bool tilted = false;
     float wheelDrop[6] = {};
-    Vec2 lastPos;
     BlockPos dynamiteTarget{-1, -1};       // dynamite: the wall it blows up
     float trainTimer = 0.0f;               // time since the last training (LegoObject_UpdateElapsedTimes)
     bool crystalDrained = false;           // power crystal used up (UnpoweredCrystalRGB)

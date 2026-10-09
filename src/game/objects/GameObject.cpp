@@ -269,10 +269,6 @@ void ObjectList::Update(float elapsed) {
         if (o.type == ObjType::Vehicle) {
             // LegoObject_Route_UpdateMovement resets a vehicle's timer while it moves.
             o.stillTime = o.routing ? 0.0f : o.stillTime + elapsed;
-            const float dx = o.position.x - o.lastPos.x, dy = o.position.y - o.lastPos.y;
-            const ActivityModel* am = o.info ? o.info->model.activities.get() : nullptr;
-            if (am && am->wheelRadius > 0.0f) o.wheelSpin += std::sqrt(dx * dx + dy * dy) / am->wheelRadius;
-            o.lastPos = {o.position.x, o.position.y};
         }
         const ActivityType lastActivity = o.activity;
         o.UpdateActivityChange();
@@ -964,13 +960,13 @@ void ObjectList::DrawVehicleParts(Renderer3D& r, const GameObject& o, const LwsS
     };
     // Vehicle_PopulateWheelNulls: up to six wheels, turning with the distance driven.
     if (am.wheelMesh && !am.wheelNull.empty()) {
-        Mat4 spin;
-        const float c = std::cos(o.wheelSpin), s = std::sin(o.wheelSpin);
-        spin.m[5] = c; spin.m[6] = s; spin.m[9] = -s; spin.m[10] = c;
         for (int w = 0; w < 6; ++w) {
             Mat4 mw;
             if (!nodeWorld(am.wheelNull, w, mw)) break;
             mw.m[14] += o.wheelDrop[w];  // resting on the floor
+            Mat4 spin;
+            const float c = std::cos(o.wheelSpin[w]), s = std::sin(o.wheelSpin[w]);
+            spin.m[5] = c; spin.m[6] = s; spin.m[9] = -s; spin.m[10] = c;
             DrawMesh(r, *am.wheelMesh, mw * spin);
         }
     }
@@ -1045,6 +1041,10 @@ Mat4 ObjectList::WorldMatrix(const GameObject& o, float scale) const {
 void ObjectList::UpdateVehicleTilt(GameObject& v) {
     v.tilted = false;
     for (float& d : v.wheelDrop) d = 0.0f;
+    // Another animation may list its wheel nulls in another order: start tracking afresh.
+    const int tracked = v.wheelAnim == v.anim ? v.wheelsTracked : 0;
+    v.wheelAnim = v.anim;
+    v.wheelsTracked = 0;  // stays 0 unless the wheels are found again below
     const ActivityModel* am = v.info ? v.info->model.activities.get() : nullptr;
     if (!level_ || !am || am->wheelNull.empty() || !v.anim || !v.anim->scene) return;
     // The wheel nulls of the playing animation with the vehicle upright (Vehicle_PopulateWheelNulls).
@@ -1085,11 +1085,21 @@ void ObjectList::UpdateVehicleTilt(GameObject& v) {
     // Each wheel is then moved down (or up) onto the floor below it, keeping the height its null
     // has above the floor when the vehicle stands upright on flat ground (axle, not tyre, on it).
     const Mat4 tilt = ObjectMatrix(v.position, v.tiltDir, v.tiltUp, am->scale);
+    v.wheelsTracked = tracked;
     for (size_t i = 0; i < wheels.size(); ++i) {
         const float rest = v.position.z - (upright * pose.world[wheels[i]]).TransformPoint({0, 0, 0}).z;
-        const Vec3f w = (tilt * pose.world[wheels[i]]).TransformPoint({0, 0, 0});
+        Vec3f w = (tilt * pose.world[wheels[i]]).TransformPoint({0, 0, 0});
         v.wheelDrop[i] = map.WorldZ(w.x, w.y) - rest - w.z;
+        w.z += v.wheelDrop[i];
+        // The wheel turns by how far it moved, backwards if against the vehicle's facing.
+        if (int(i) < v.wheelsTracked && am->wheelRadius > 0.0f) {
+            const Vec3f d = w - v.wheelLast[i];
+            const float turn = Length(d) / am->wheelRadius;
+            v.wheelSpin[i] += Dot(d, v.tiltDir) < 0.0f ? -turn : turn;
+        }
+        v.wheelLast[i] = w;
     }
+    v.wheelsTracked = int(wheels.size());
 }
 
 void ObjectList::DropCarried(GameObject& o) {
