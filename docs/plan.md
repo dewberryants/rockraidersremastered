@@ -22,6 +22,9 @@ Playable: Level 1 start to finish, and the early missions as far as their system
 
 ## How we work
 
+Test setups for the user are batch files in `scripts\` (the user runs Windows and cannot set
+environment variables on a command line).
+
 Each step is built and committed, then played and checked by the user. Fixes follow the
 report. Behaviour comes from the decompiled game; where we deliberately differ, the code says so.
 
@@ -41,8 +44,7 @@ Next:
    `<vehicle activity><vehicle type>` (`Activity_` + type while routing), hidden for
    `InvisibleDriver`. Get Out puts it at the deposit null if the ground takes it
    (`ObjectList::GetOut`). Object list `driving` boards and trains the raider.
-   Test setup: `RR_DEBUG_SKILLS=7 RR_DEBUG_SPAWN="SmallTruck,7,9;Hoverboard,6,9;SmallDigger,7,10"`
-   on Level02. Still open: water vehicles (docks, GetInAtLand/GetOutAtLand), several selected
+   Test setup: `scripts	est-vehicles.bat` (Level02, three vehicles, every raider trained). Still open: water vehicles (docks, GetInAtLand/GetOutAtLand), several selected
    raiders answering a click, dropping a carried load first, TakeCarryingDrivers, the get-in
    pointer.
 2. **Driving.** Selected vehicles go where you click, with their own route speed and terrain
